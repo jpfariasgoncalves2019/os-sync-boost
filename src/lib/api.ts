@@ -54,7 +54,7 @@ class ApiClient {
     );
   }
 
-  async saveEmpresaConfig(data: EmpresaConfig, token: string): Promise<ApiResponse<EmpresaConfig>> {
+  async saveEmpresaConfig(data: Partial<EmpresaConfig>, token: string): Promise<ApiResponse<EmpresaConfig>> {
     return this.request<EmpresaConfig>(
       `${SUPABASE_FUNCTIONS_URL}/api-configuracoes`,
       { method: 'POST', body: JSON.stringify(data), headers: { Authorization: `Bearer ${token}` } },
@@ -132,7 +132,7 @@ class ApiClient {
     );
   }
 
-  async updateOS(id: string, data: Partial<NovaOSForm>): Promise<ApiResponse<OrdemServico>> {
+  async updateOS(id: string, data: any): Promise<ApiResponse<OrdemServico>> {
     return this.request<OrdemServico>(
       `${SUPABASE_FUNCTIONS_URL}/api-os/${id}`,
       { method: 'PUT', body: JSON.stringify(data) },
