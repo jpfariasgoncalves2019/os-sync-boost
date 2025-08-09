@@ -253,7 +253,9 @@ serve(async (req) => {
             .from('ordens_servico')
             .select(`
               *,
-              clientes(nome, telefone)
+              clientes(nome, telefone),
+              servicos_os(nome_servico),
+              produtos_os(nome_produto)
             `, { count: 'exact' })
             .is('deleted_at', null)
             .order('created_at', { ascending: false });
@@ -272,7 +274,7 @@ serve(async (req) => {
 
           if (query) {
             queryBuilder = queryBuilder.or(
-              `os_numero_humano.ilike.%${query}%,clientes.nome.ilike.%${query}%`
+              `os_numero_humano.ilike.%${query}%,clientes.nome.ilike.%${query}%,servicos_os.nome_servico.ilike.%${query}%,produtos_os.nome_produto.ilike.%${query}%`
             );
           }
 
