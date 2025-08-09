@@ -23,14 +23,14 @@ export default function DetalheOS() {
   const { toast } = useToast();
   const [os, setOS] = useState<OrdemServico | null>(null);
   const [loading, setLoading] = useState(false);
-  const { token } = useUserToken();
+  const token = useUserToken();
 
   useEffect(() => {
     if (id) {
       setLoading(true);
       apiClient.get(`/os/${id}`)
         .then(response => {
-          setOS(response.data);
+          setOS(response.data as OrdemServico);
         })
         .catch(error => {
           console.error('Erro ao carregar OS:', error);

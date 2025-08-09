@@ -290,9 +290,13 @@ export default function NovaOSEdicao() {
   };
 
   // Update service total based on price (quantity is always 1 for services)
-  const updateServicoTotal = (index: number, field: keyof ServicoOS, value: string | number) => {
+  const updateServicoTotal = (index: number, field: keyof NovaOSForm['servicos'][number], value: any) => {
     const servicos = getValues("servicos");
-    servicos[index][field] = value;
+    if (field === 'preco_unitario' || field === 'total' || field === 'quantidade') {
+      (servicos[index] as any)[field] = Number(value) || 0;
+    } else {
+      (servicos[index] as any)[field] = value as any;
+    }
     servicos[index].total = servicos[index].preco_unitario || 0;
     setValue("servicos", servicos);
   };
@@ -579,7 +583,7 @@ export default function NovaOSEdicao() {
                 size="sm"
                 className="ml-2"
                 onClick={async () => {
-                  if ('contacts' in navigator && 'select' in navigator.contacts) {
+                  if ((navigator as any).contacts && typeof (navigator as any).contacts.select === 'function') {
                     try {
                       // Solicita seleção de contato
                       const props = ['name', 'tel', 'email'];
@@ -630,7 +634,7 @@ export default function NovaOSEdicao() {
                           nome: cliente.nome,
                           telefone: cliente.telefone,
                           email: cliente.email || "",
-                        } as ClienteType);
+                        } as Cliente);
                       }
                     }
                   }}

@@ -8,17 +8,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown } from "lucide-react";
-import { STATUS_CONFIG } from "@/lib/types";
+import { STATUS_CONFIG, OrdemServico } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { apiClient } from "@/lib/api";
 
 interface StatusDropdownProps {
   osId: string;
-  currentStatus: string;
-  onStatusChange?: (newStatus: string) => void;
+  currentStatus: OrdemServico['status'];
+  onStatusChange?: (newStatus: OrdemServico['status']) => void;
 }
 
-const statusOptions = [
+const statusOptions: { value: OrdemServico['status']; label: string }[] = [
   { value: 'rascunho', label: 'Rascunho' },
   { value: 'aberta', label: 'Aberta' },
   { value: 'em_andamento', label: 'Em Andamento' },
@@ -30,7 +30,7 @@ export function StatusDropdown({ osId, currentStatus, onStatusChange }: StatusDr
   const [updating, setUpdating] = useState(false);
   const { toast } = useToast();
 
-  const handleStatusChange = async (newStatus: string) => {
+  const handleStatusChange = async (newStatus: OrdemServico['status']) => {
     if (newStatus === currentStatus) return;
 
     setUpdating(true);

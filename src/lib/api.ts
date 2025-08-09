@@ -1,4 +1,4 @@
-import { EmpresaConfig, Cliente, NovaOSForm, PaginatedResponse, OrdemServico } from "./types";
+import { EmpresaConfig, Cliente, NovaOSForm, PaginatedResponse, OrdemServico, OSFilters } from "./types";
 
 const API_BASE_URL = '/api';
 const SUPABASE_FUNCTIONS_URL =
@@ -87,14 +87,14 @@ class ApiClient {
   }
 
   // Métodos específicos para OS
-  async listOS(filters?: Partial<NovaOSForm>): Promise<ApiResponse<PaginatedResponse<NovaOSForm>>> {
+  async listOS(params?: OSFilters & { page?: number; size?: number }): Promise<ApiResponse<{ items: OrdemServico[]; pagination: { page: number; size: number; total: number | null; pages: number; } }>> {
     // Filtrar parâmetros undefined
-    const cleanFilters = Object.fromEntries(
-      Object.entries(filters || {}).filter(([_, value]) => value !== undefined && value !== null && value !== '')
+    const cleanParams = Object.fromEntries(
+      Object.entries(params || {}).filter(([_, value]) => value !== undefined && value !== null && value !== '')
     );
-    const queryString = Object.keys(cleanFilters).length > 0 ? new URLSearchParams(cleanFilters as Record<string, string>).toString() : '';
+    const queryString = Object.keys(cleanParams).length > 0 ? new URLSearchParams(cleanParams as Record<string, string>).toString() : '';
     
-    return this.request<PaginatedResponse<NovaOSForm>>(
+    return this.request<{ items: OrdemServico[]; pagination: { page: number; size: number; total: number | null; pages: number; } }>(
       `${SUPABASE_FUNCTIONS_URL}/api-os${queryString ? `?${queryString}` : ''}`,
       { method: 'GET' },
       true
@@ -124,16 +124,16 @@ class ApiClient {
     }
   }
 
-  async createOS(data: NovaOSForm): Promise<ApiResponse<NovaOSForm>> {
-    return this.request<NovaOSForm>(
+  async createOS(data: any): Promise<ApiResponse<OrdemServico>> {
+    return this.request<OrdemServico>(
       `${SUPABASE_FUNCTIONS_URL}/api-os`,
       { method: 'POST', body: JSON.stringify(data) },
       true
     );
   }
 
-  async updateOS(id: string, data: NovaOSForm): Promise<ApiResponse<NovaOSForm>> {
-    return this.request<NovaOSForm>(
+  async updateOS(id: string, data: Partial<NovaOSForm>): Promise<ApiResponse<OrdemServico>> {
+    return this.request<OrdemServico>(
       `${SUPABASE_FUNCTIONS_URL}/api-os/${id}`,
       { method: 'PUT', body: JSON.stringify(data) },
       true

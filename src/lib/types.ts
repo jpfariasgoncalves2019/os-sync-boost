@@ -118,6 +118,10 @@ export interface EmpresaConfig {
   endereco: string;
   telefone: string;
   email: string;
+  // Campos adicionais usados na UI (opcionais)
+  nome_fantasia?: string;
+  cnpj?: string;
+  logo_empresa?: string | null;
   created_at: string;
   updated_at: string;
 }

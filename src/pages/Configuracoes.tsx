@@ -187,8 +187,9 @@ export default function Configuracoes() {
       const response = await apiClient.testOpenAIKey(apiKey);
       
       if (response.ok && response.data) {
-        const isValid = (response.data as {openai_key_ok: boolean}).openai_key_ok;
-        setOpenAIKeyStatus(isValid);
+        const data = response.data as any;
+        const isValid = (data?.openai_key_ok ?? data?.valid) ?? false;
+        setOpenAIKeyStatus(!!isValid);
         
         toast({
           title: isValid ? "Chave válida" : "Chave inválida",
