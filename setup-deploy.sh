@@ -51,15 +51,9 @@ supabase_auth_and_link(){
   local do_auth; do_auth=$(ask "Configurar login/link do Supabase agora? (s/n): ")
   [[ "$do_auth" =~ ^[sSyY]$ ]] || { info "Pulando Supabase."; return 0; }
   if ! supabase projects list >/dev/null 2>&1; then
-    if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
-      info "Usando SUPABASE_ACCESS_TOKEN..."
-      supabase login --token "$SUPABASE_ACCESS_TOKEN" || warn "Falha no login via token."
-    else
-      supabase login || warn "Login interativo falhou."
-    fi
-  else
-    good "Já logado no Supabase."
-  fi
+    if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then supabase login --token "$SUPABASE_ACCESS_TOKEN" || warn "Falha no login via token."
+    else supabase login || warn "Login interativo falhou."; fi
+  else good "Já logado no Supabase."; fi
   local pref; pref=$(ask "Informe o project ref para linkar (ou Enter p/ pular): ")
   [ -n "$pref" ] && supabase link --project-ref "$pref" || info "Sem link agora."
 }
@@ -74,10 +68,22 @@ open_url(){
   fi
 }
 
+git_push_safe(){
+  local BRANCH="$1"
+  git fetch origin >/dev/null 2>&1 || true
+  if ! git rev-parse --abbrev-ref --symbolic-full-name "@{u}" >/dev/null 2>&1; then
+    info "Definindo upstream: origin/$BRANCH"
+    git push -u origin "$BRANCH" && return 0
+  fi
+  if git push origin "$BRANCH"; then return 0; fi
+  warn "Push falhou. Tentando pull --rebase e novo push..."
+  git pull --rebase origin "$BRANCH" && git push origin "$BRANCH"
+}
+
 setup(){
   bold "===== 🚦 Setup Automático do Projeto ====="
   ensure_node
-  bold "📦 npm install"; npm install
+  bold "�� npm install"; npm install
   ensure_supabase_cli || true
   supabase_auth_and_link
   bold "🚀 npm run dev (log em /tmp/dev.log)"; npm run dev &>/tmp/dev.log & DEV_PID=$!
@@ -86,18 +92,22 @@ setup(){
 }
 
 deploy(){
-  bold "===== 🚀 Commit, Push e Deploy Netlify ====="
+  bold "===== 🚀 Commit, Status, Push e Deploy Netlify ====="
   command -v git >/dev/null 2>&1 || { err "git não encontrado"; exit 1; }
 
   local BRANCH; BRANCH=$(git rev-parse --abbrev-ref HEAD)
-  info "Branch: $BRANCH"; git status
+  info "Remote(s):"; git remote -v
+  info "Status curto:"; git status -sb || git status
+  info "Branch atual: $BRANCH"
+
   if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
-    local c; c=$(ask "⚠️  Não está em main/master. Continuar? (s/n): "); [[ "$c" =~ ^[sSyY]$ ]] || { err "Abortado."; return 1; }
+    local c; c=$(ask "⚠️  Não está em main/master. Continuar mesmo assim? (s/n): "); [[ "$c" =~ ^[sSyY]$ ]] || { err "Abortado."; return 1; }
   fi
 
   git add -A
+
   if git diff --cached --quiet && git diff --quiet; then
-    warn "Nada para commitar (seguindo com deploy)."
+    warn "Nenhuma alteração nova para commit."
   else
     local files types="" feature="" ui=false backend=false doc=false test=false config=false deps=false
     files=$(git diff --cached --name-only)
@@ -116,10 +126,13 @@ deploy(){
     local suggestion="${types:-chore: }atualizações em $short"
     echo "Sugestão: \"$suggestion\""
     local msg; msg=$(ask "Enter p/aceitar ou digite outra mensagem: "); [ -z "$msg" ] && msg="$suggestion"
-    git commit -m "$msg" && git push origin "$BRANCH" && good "Commit + push OK"
+    git commit -m "$msg" || warn "Nada para commitar."
   fi
 
-  bold "🌐 Publicando no Netlify (CLI) — sempre"
+  git_push_safe "$BRANCH" || { err "Falha no push."; return 1; }
+  good "Push concluído."
+
+  bold "🌐 Publicando no Netlify (CLI)"
   if command -v netlify >/dev/null 2>&1; then
     netlify deploy --prod
   else
@@ -133,11 +146,7 @@ help(){
   cat <<'HLP'
 Uso:
   setup     # instala deps, supabase (opcional) e sobe o dev
-  deploy    # commit+push no GitHub e SEMPRE publica no Netlify (CLI)
-Dicas:
-  - PORT=5173 setup   # se sua app usar outra porta
-  - netlify.toml fixa build: npm run build -> dist (SPA redirect incluso)
-  - Se site estiver conectado ao GitHub, o push também dispara CI; o CLI publica imediatamente.
+  deploy    # commit + push seguro no GitHub e deploy Netlify
 HLP
 }
 
