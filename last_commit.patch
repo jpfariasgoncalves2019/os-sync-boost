@@ -1,0 +1,1684 @@
+From a58f8b8eddb5c9f146673547b62c1a261ae1a37b Mon Sep 17 00:00:00 2001
+From: AI Agent <agent@example.com>
+Date: Fri, 1 Aug 2025 15:22:39 +0000
+Subject: [PATCH] feat: implement logs and validation, refactor edge function
+
+- Add centralized log function and instrumentation in NovaOSEdicao
+- Set type="button" on navigation and final action buttons to prevent form submission
+- Add logs for rascunho and aberta clicks
+- Display validation message when payment method not selected
+- Refactor edge function to separate POST and PUT operations; remove expenses from main OS update and manage related tables
+- Update API client to read Supabase Functions URL from environment and generate Idempotency-Key header
+---
+ repo/src/components/WizardStep.tsx      |  99 +++
+ repo/src/lib/api.ts                     | 212 ++++++
+ repo/src/pages/NovaOSEdicao.tsx         | 910 ++++++++++++++++++++++++
+ repo/supabase/functions/api-os/index.ts | 411 +++++++++++
+ 4 files changed, 1632 insertions(+)
+ create mode 100644 repo/src/components/WizardStep.tsx
+ create mode 100644 repo/src/lib/api.ts
+ create mode 100644 repo/src/pages/NovaOSEdicao.tsx
+ create mode 100644 repo/supabase/functions/api-os/index.ts
+
+diff --git a/repo/src/components/WizardStep.tsx b/repo/src/components/WizardStep.tsx
+new file mode 100644
+index 0000000..ca4c3fa
+--- /dev/null
++++ b/repo/src/components/WizardStep.tsx
+@@ -0,0 +1,99 @@
++import { ReactNode } from "react";
++import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
++import { Button } from "@/components/ui/button";
++import { ChevronLeft, ChevronRight } from "lucide-react";
++
++/**
++ * WizardStep is a reusable component used by the OS creation wizard. It renders
++ * the step header, description, children form content and next/previous
++ * navigation buttons. To avoid accidental form submissions when nested inside
++ * forms, the buttons explicitly set type="button".
++ */
++interface WizardStepProps {
++  title: string;
++  description?: string;
++  children: ReactNode;
++  currentStep: number;
++  totalSteps: number;
++  onNext?: () => void;
++  onPrevious?: () => void;
++  nextLabel?: string;
++  previousLabel?: string;
++  isNextDisabled?: boolean;
++  showStepIndicator?: boolean;
++}
++
++export function WizardStep({
++  title,
++  description,
++  children,
++  currentStep,
++  totalSteps,
++  onNext,
++  onPrevious,
++  nextLabel = "Próximo",
++  previousLabel = "Anterior",
++  isNextDisabled = false,
++  showStepIndicator = true,
++}: WizardStepProps) {
++  return (
++    <div className="max-w-4xl mx-auto p-4 space-y-6">
++      {showStepIndicator && (
++        <div className="flex items-center justify-between mb-6">
++          <div className="flex items-center space-x-2">
++            <span className="text-sm text-muted-foreground">
++              Passo {currentStep} de {totalSteps}
++            </span>
++          </div>
++          <div className="flex space-x-1">
++            {Array.from({ length: totalSteps }, (_, index) => (
++              <div
++                key={index}
++                className={`w-2 h-2 rounded-full ${
++                  index < currentStep
++                    ? "bg-primary"
++                    : index === currentStep - 1
++                    ? "bg-primary"
++                    : "bg-muted"
++                }`}
++              />
++            ))}
++          </div>
++        </div>
++      )}
++
++      <Card>
++        <CardHeader>
++          <CardTitle>{title}</CardTitle>
++          {description && <CardDescription>{description}</CardDescription>}
++        </CardHeader>
++        <CardContent className="space-y-6">
++          {children}
++
++          <div className="flex justify-between pt-6 border-t">
++            <Button
++              type="button"
++              variant="outline"
++              onClick={onPrevious}
++              disabled={currentStep === 1}
++              className="flex items-center gap-2"
++            >
++              <ChevronLeft className="w-4 h-4" />
++              {previousLabel}
++            </Button>
++
++            <Button
++              type="button"
++              onClick={onNext}
++              disabled={isNextDisabled}
++              className="flex items-center gap-2"
++            >
++              {nextLabel}
++              <ChevronRight className="w-4 h-4" />
++            </Button>
++          </div>
++        </CardContent>
++      </Card>
++    </div>
++  );
++}
+\ No newline at end of file
+diff --git a/repo/src/lib/api.ts b/repo/src/lib/api.ts
+new file mode 100644
+index 0000000..8a40686
+--- /dev/null
++++ b/repo/src/lib/api.ts
+@@ -0,0 +1,212 @@
++// Frontend API client responsible for calling backend edge functions and API endpoints
++
++const API_BASE_URL = '/api';
++
++// Read Supabase Functions URL from environment when available. Fallback to the
++// hard-coded URL used previously. This allows environments like Netlify and
++// Lovable to override the function host via VITE_SUPABASE_FUNCTIONS_URL.
++const SUPABASE_FUNCTIONS_URL =
++  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_FUNCTIONS_URL) ||
++  'https://ppxexzbmaepudhkqfozt.supabase.co/functions/v1';
++
++export interface ApiResponse<T> {
++  ok: boolean;
++  data?: T;
++  error?: {
++    code: string;
++    message: string;
++    details?: any;
++  };
++}
++
++class ApiClient {
++  // Generate a random idempotency key for each request to allow the backend to
++  // recognize and ignore duplicate submissions.
++  private generateIdempotencyKey(): string {
++    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
++  }
++
++  private async request<T>(
++    endpoint: string,
++    options: RequestInit = {},
++    absoluteUrl = false
++  ): Promise<ApiResponse<T>> {
++    try {
++      const url = absoluteUrl ? endpoint : `${API_BASE_URL}${endpoint}`;
++      const response = await fetch(url, {
++        headers: {
++          'Content-Type': 'application/json',
++          'Idempotency-Key': this.generateIdempotencyKey(),
++          ...options.headers,
++        },
++        ...options,
++      });
++      return await response.json();
++    } catch (error) {
++      return {
++        ok: false,
++        error: {
++          code: 'NETWORK_ERROR',
++          message: 'Erro de conexão. Verifique sua internet.',
++        },
++      };
++    }
++  }
++
++  // --- Configuração da Empresa ---
++  async getEmpresaConfig(token: string): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-configuracoes`,
++      {
++        method: 'GET',
++        headers: { Authorization: `Bearer ${token}` },
++      },
++      true
++    );
++  }
++
++  async saveEmpresaConfig(data: any, token: string): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-configuracoes`,
++      {
++        method: 'POST',
++        body: JSON.stringify(data),
++        headers: { Authorization: `Bearer ${token}` },
++      },
++      true
++    );
++  }
++
++  // Generic HTTP helpers
++  async get<T>(endpoint: string): Promise<ApiResponse<T>> {
++    return this.request<T>(endpoint, { method: 'GET' });
++  }
++
++  async post<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
++    return this.request<T>(endpoint, {
++      method: 'POST',
++      body: data ? JSON.stringify(data) : undefined,
++    });
++  }
++
++  async put<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
++    return this.request<T>(endpoint, {
++      method: 'PUT',
++      body: data ? JSON.stringify(data) : undefined,
++    });
++  }
++
++  async delete<T>(endpoint: string): Promise<ApiResponse<T>> {
++    return this.request<T>(endpoint, { method: 'DELETE' });
++  }
++
++  // Métodos específicos para Ordens de Serviço (OS)
++  async listOS(filters?: any): Promise<ApiResponse<any>> {
++    const cleanFilters = Object.fromEntries(
++      Object.entries(filters || {}).filter(([, value]) => value !== undefined && value !== null && value !== '')
++    );
++    const queryString = Object.keys(cleanFilters).length > 0
++      ? new URLSearchParams(cleanFilters as Record<string, string>).toString()
++      : '';
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-os${queryString ? `?${queryString}` : ''}`,
++      { method: 'GET' },
++      true
++    );
++  }
++
++  async getOS(id: string): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-os/${id}`,
++      { method: 'GET' },
++      true
++    );
++  }
++
++  async createOS(data: any): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-os`,
++      {
++        method: 'POST',
++        body: data ? JSON.stringify(data) : undefined,
++      },
++      true
++    );
++  }
++
++  async updateOS(id: string, data: any): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-os/${id}`,
++      {
++        method: 'PUT',
++        body: data ? JSON.stringify(data) : undefined,
++      },
++      true
++    );
++  }
++
++  async deleteOS(id: string): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-os/${id}`,
++      { method: 'DELETE' },
++      true
++    );
++  }
++
++  // Métodos específicos para Clientes
++  async listClients(filters?: any): Promise<ApiResponse<any>> {
++    const cleanFilters = Object.fromEntries(
++      Object.entries(filters || {}).filter(([, value]) => value !== undefined && value !== null && value !== '')
++    );
++    const queryString = Object.keys(cleanFilters).length > 0
++      ? new URLSearchParams(cleanFilters as Record<string, string>).toString()
++      : '';
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-clientes${queryString ? `?${queryString}` : ''}`,
++      { method: 'GET' },
++      true
++    );
++  }
++
++  async createClient(data: any): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-clientes`,
++      {
++        method: 'POST',
++        body: data ? JSON.stringify(data) : undefined,
++      },
++      true
++    );
++  }
++
++  async updateClient(id: string, data: any): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-clientes/${id}`,
++      {
++        method: 'PUT',
++        body: data ? JSON.stringify(data) : undefined,
++      },
++      true
++    );
++  }
++
++  async deleteClient(id: string): Promise<ApiResponse<any>> {
++    return this.request<any>(
++      `${SUPABASE_FUNCTIONS_URL}/api-clientes/${id}`,
++      { method: 'DELETE' },
++      true
++    );
++  }
++
++  // Métodos para interagir com a API de chaves OpenAI
++  async testOpenAIKey(key: string): Promise<ApiResponse<any>> {
++    return this.post('/user-openai-key/test', { key });
++  }
++
++  async saveOpenAIKey(key: string): Promise<ApiResponse<any>> {
++    return this.post('/user-openai-key', { key });
++  }
++}
++
++// Export a singleton instance of the ApiClient for use throughout the app
++export const apiClient = new ApiClient();
+\ No newline at end of file
+diff --git a/repo/src/pages/NovaOSEdicao.tsx b/repo/src/pages/NovaOSEdicao.tsx
+new file mode 100644
+index 0000000..c6b0746
+--- /dev/null
++++ b/repo/src/pages/NovaOSEdicao.tsx
+@@ -0,0 +1,910 @@
++import { useState, useEffect } from "react";
++import { useNavigate, useParams, useLocation } from "react-router-dom";
++import { useForm, Controller } from "react-hook-form";
++import { zodResolver } from "@hookform/resolvers/zod";
++import { z } from "zod";
++import { WizardStep } from "@/components/WizardStep";
++import { ItemList, MoneyInput } from "@/components/ItemList";
++import { Button } from "@/components/ui/button";
++import { Input } from "@/components/ui/input";
++import { Label } from "@/components/ui/label";
++import { Textarea } from "@/components/ui/textarea";
++import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { Separator } from "@/components/ui/separator";
++import { Badge } from "@/components/ui/badge";
++import { useToast } from "@/hooks/use-toast";
++import { apiClient } from "@/lib/api";
++import { NovaOSForm, Cliente, EquipamentoOS, ServicoOS, ProdutoOS, DespesaOS, formatCurrency } from "@/lib/types";
++import { formatPhoneNumber, normalizePhoneNumber, validatePhoneE164 } from "@/lib/format";
++import { Phone, User, Wrench, Package, Receipt, FileText, Save, CheckCircle, X } from "lucide-react";
++
++const novaOSSchema = z.object({
++  cliente: z.object({
++    id: z.string().optional(),
++    nome: z.string().min(1, "Nome é obrigatório"),
++    telefone: z.string()
++      .min(1, "Telefone é obrigatório")
++      .refine((val) => {
++        const normalized = normalizePhoneNumber(val);
++        return validatePhoneE164(normalized);
++      }, "Informe um telefone válido com DDD"),
++    email: z.string().email("Email inválido").optional().or(z.literal("")),
++  }),
++  equipamento: z.object({
++    tipo: z.string().min(1, "Tipo é obrigatório"),
++    marca: z.string().optional(),
++    modelo: z.string().optional(),
++    numero_serie: z.string().optional(),
++  }),
++  servicos: z.array(z.object({
++    nome_servico: z.string().min(1, "Nome do serviço é obrigatório"),
++    valor_unitario: z.number().min(0.01, "Valor deve ser maior que zero"),
++    valor_total: z.number().min(0.01, "Valor total deve ser maior que zero"),
++  })),
++  produtos: z.array(z.object({
++    nome_produto: z.string().min(1, "Nome do produto é obrigatório"),
++    quantidade: z.number().min(1, "Quantidade deve ser maior que zero"),
++    valor_unitario: z.number().min(0.01, "Valor unitário deve ser maior que zero"),
++    valor_total: z.number().min(0.01, "Valor total deve ser maior que zero"),
++  })),
++  despesas: z.array(z.object({
++    descricao: z.string().min(1, "Descrição é obrigatória"),
++    valor: z.number().min(0.01, "Valor deve ser maior que zero"),
++  })),
++  forma_pagamento: z.string().min(1, "Forma de pagamento é obrigatória"),
++  garantia: z.string().optional(),
++  observacoes: z.string().optional(),
++});
++
++export default function NovaOSEdicao() {
++  const navigate = useNavigate();
++  const { id } = useParams();
++  const location = useLocation();
++  const { toast } = useToast();
++
++  // Centralized logging function to aid debugging and trace user interactions.
++  // It safely logs events with an optional payload to the browser console. If
++  // console is unavailable (e.g. during SSR), it silently does nothing.
++  const log = (event: string, payload?: any) => {
++    try {
++      // eslint-disable-next-line no-console
++      console.log(`[NovaOSEdicao] ${event}`, payload ?? "");
++    } catch {
++      /* noop */
++    }
++  };
++  
++  const [currentStep, setCurrentStep] = useState(1);
++  const [clientes, setClientes] = useState<Cliente[]>([]);
++  const [loading, setLoading] = useState(false);
++  const [saving, setSaving] = useState(false);
++
++  const isEditing = !!id;
++  const isDuplicating = !!location.state?.duplicateFrom;
++
++  const form = useForm<NovaOSForm>({
++    resolver: zodResolver(novaOSSchema),
++    defaultValues: {
++      cliente: { nome: "", telefone: "", email: "" },
++      equipamento: { tipo: "", marca: "", modelo: "", numero_serie: "" },
++      servicos: [],
++      produtos: [],
++      despesas: [],
++      forma_pagamento: "",
++      garantia: "",
++      observacoes: "",
++    },
++  });
++
++  const { control, watch, setValue, getValues, trigger, formState: { errors } } = form;
++  const watchedData = watch();
++
++  // Load clients
++  useEffect(() => {
++    const loadClientes = async () => {
++      try {
++        const response = await apiClient.listClients();
++        if (response.ok) {
++          setClientes(response.data.items);
++        }
++      } catch (error) {
++        console.error("Erro ao carregar clientes:", error);
++      }
++    };
++    loadClientes();
++  }, []);
++
++  // Load OS data for editing or duplicating
++  useEffect(() => {
++    const loadOS = async () => {
++      if (isDuplicating && location.state?.duplicateFrom) {
++        const os = location.state.duplicateFrom;
++        setValue("cliente", {
++          id: os.cliente_id,
++          nome: os.cliente_nome || "",
++          telefone: os.cliente_telefone || "",
++          email: os.cliente_email || "",
++        } as any);
++        setValue("equipamento", {
++          tipo: os.equipamento?.tipo || "",
++          marca: os.equipamento?.marca || "",
++          modelo: os.equipamento?.modelo || "",
++          numero_serie: os.equipamento?.numero_serie || "",
++        });
++        setValue("servicos", os.servicos || []);
++        setValue("produtos", os.produtos || []);
++        setValue("despesas", os.despesas || []);
++        setValue("forma_pagamento", os.forma_pagamento || "");
++        setValue("garantia", os.garantia || "");
++        setValue("observacoes", os.observacoes || "");
++        return;
++      }
++
++      if (!isEditing || !id) return;
++      
++      setLoading(true);
++      try {
++        const response = await apiClient.getOS(id);
++        if (response.ok) {
++          const os = response.data;
++          setValue("cliente", {
++            id: os.cliente_id,
++            nome: os.cliente_nome || "",
++            telefone: os.cliente_telefone || "",
++            email: os.cliente_email || "",
++          } as any);
++          setValue("equipamento", {
++            tipo: os.equipamento?.tipo || "",
++            marca: os.equipamento?.marca || "",
++            modelo: os.equipamento?.modelo || "",
++            numero_serie: os.equipamento?.numero_serie || "",
++          });
++          setValue("servicos", os.servicos || []);
++          setValue("produtos", os.produtos || []);
++          setValue("despesas", os.despesas || []);
++          setValue("forma_pagamento", os.forma_pagamento || "");
++          setValue("garantia", os.garantia || "");
++          setValue("observacoes", os.observacoes || "");
++        }
++      } catch (error) {
++        toast({
++          title: "Erro",
++          description: "Erro ao carregar dados da OS",
++          variant: "destructive",
++        });
++      } finally {
++        setLoading(false);
++      }
++    };
++
++    loadOS();
++  }, [id, isEditing, isDuplicating, location.state, setValue, toast]);
++
++  // Calculate totals
++  const calculateTotals = () => {
++    const total_servicos = watchedData.servicos.reduce((sum, s) => sum + s.valor_total, 0);
++    const total_produtos = watchedData.produtos.reduce((sum, p) => sum + p.valor_total, 0);
++    const total_despesas = watchedData.despesas.reduce((sum, d) => sum + d.valor, 0);
++    const total_geral = total_servicos + total_produtos + total_despesas;
++
++    return { total_servicos, total_produtos, total_despesas, total_geral };
++  };
++
++  // Update product total when quantity or unit value changes
++  const updateProdutoTotal = (index: number, field: keyof ProdutoOS, value: any) => {
++    const produtos = [...watchedData.produtos];
++    produtos[index] = { ...produtos[index], [field]: value };
++    
++    if (field === "quantidade" || field === "valor_unitario") {
++      produtos[index].valor_total = produtos[index].quantidade * produtos[index].valor_unitario;
++    }
++    
++    setValue("produtos", produtos);
++  };
++
++  // Update service total (same as unit value for services)
++  const updateServicoTotal = (index: number, field: keyof ServicoOS, value: any) => {
++    const servicos = [...watchedData.servicos];
++    servicos[index] = { ...servicos[index], [field]: value };
++    
++    if (field === "valor_unitario") {
++      servicos[index].valor_total = value;
++    }
++    
++    setValue("servicos", servicos);
++  };
++
++  const handleNext = async () => {
++    // Track user navigation to the next step
++    log('click:next');
++    const stepValidations = {
++      1: ["cliente.nome", "cliente.telefone"],
++      2: ["equipamento.tipo"],
++      3: [],
++      4: [],
++      5: [],
++      6: ["forma_pagamento"],
++    };
++
++    const fieldsToValidate = stepValidations[currentStep as keyof typeof stepValidations];
++    
++    // Check if at least one service or product exists for step 6
++    if (currentStep === 6) {
++      if (watchedData.servicos.length === 0 && watchedData.produtos.length === 0) {
++        toast({
++          title: "Validação",
++          description: "Adicione pelo menos um serviço ou produto",
++          variant: "destructive",
++        });
++        return;
++      }
++    }
++
++    const isValid = await trigger(fieldsToValidate as any);
++    if (isValid && currentStep < 6) {
++      setCurrentStep(currentStep + 1);
++    }
++  };
++
++  const handlePrevious = () => {
++    if (currentStep > 1) {
++      // Track user navigation to the previous step
++      log('click:previous');
++      setCurrentStep(currentStep - 1);
++    }
++  };
++
++  const saveOS = async (status: "rascunho" | "aberta") => {
++    setSaving(true);
++    try {
++      // Validação local
++      if (watchedData.servicos.length === 0 && watchedData.produtos.length === 0) {
++        toast({
++          title: "Validação",
++          description: "Adicione pelo menos um serviço ou produto",
++          variant: "destructive",
++        });
++        setSaving(false);
++        return;
++      }
++      if (status === "aberta" && !watchedData.forma_pagamento) {
++        toast({
++          title: "Validação",
++          description: "Forma de pagamento é obrigatória",
++          variant: "destructive",
++        });
++        setSaving(false);
++        return;
++      }
++
++      const formData = getValues();
++      const totals = calculateTotals();
++
++      // Persistência offline se offline
++      if (typeof navigator !== "undefined" && !navigator.onLine) {
++        const rascunhos = JSON.parse(localStorage.getItem("os_rascunhos") || "[]");
++        const rascunho = {
++          ...formData,
++          status,
++          sync_status: "pending",
++          data: new Date().toISOString(),
++        };
++        localStorage.setItem("os_rascunhos", JSON.stringify([...rascunhos, rascunho]));
++        toast({
++          title: "Offline",
++          description: "Rascunho salvo localmente. Será sincronizado quando houver conexão.",
++          variant: "default",
++        });
++        setSaving(false);
++        return;
++      }
++
++      // Criação/edição de cliente
++      let clienteId = formData.cliente.id;
++      if (!clienteId) {
++        try {
++          const clientResponse = await apiClient.createClient({
++            nome: formData.cliente.nome,
++            telefone: formData.cliente.telefone,
++            email: formData.cliente.email || null,
++          });
++          if (clientResponse.ok) {
++            clienteId = clientResponse.data.id;
++          } else {
++            throw new Error(clientResponse.error?.message || "Erro ao criar cliente");
++          }
++        } catch (error) {
++          console.error("Erro ao criar cliente:", error);
++          throw new Error("Erro ao criar cliente");
++        }
++      }
++
++      // Montar payload
++      const osData = {
++        cliente_id: clienteId,
++        equipamento: formData.equipamento.tipo ? formData.equipamento : null,
++        servicos: formData.servicos.filter(s => s.nome_servico && s.valor_unitario > 0),
++        produtos: formData.produtos.filter(p => p.nome_produto && p.quantidade > 0 && p.valor_unitario > 0),
++        despesas: formData.despesas.filter(d => d.descricao && d.valor > 0),
++        forma_pagamento: formData.forma_pagamento,
++        garantia: formData.garantia || null,
++        observacoes: formData.observacoes || null,
++        data: new Date().toISOString(),
++        status,
++        total_servicos: totals.total_servicos,
++        total_produtos: totals.total_produtos,
++        total_despesas: totals.total_despesas,
++        total_geral: totals.total_geral,
++      };
++      // Log do payload para debug
++      console.log("Payload OS:", JSON.stringify(osData, null, 2));
++
++      let response;
++      if (isEditing && id) {
++        response = await apiClient.updateOS(id, osData);
++      } else {
++        response = await apiClient.createOS(osData);
++      }
++
++      if (response.ok) {
++        toast({
++          title: "Sucesso",
++          description: status === "rascunho" ? "Rascunho salvo com sucesso." : "Ordem de serviço salva e finalizada com sucesso.",
++        });
++        navigate(`/os/${response.data.id}`);
++      } else {
++        let msg = response.error?.message || "Erro ao salvar OS";
++        if (response.error?.details && Array.isArray(response.error.details)) {
++          msg += ": " + response.error.details.join(", ");
++        }
++        if (response.error?.code === "INTERNAL_ERROR") {
++          msg = "Erro interno do servidor. Verifique se todos os campos obrigatórios estão preenchidos corretamente. Caso o erro persista, contate o suporte.";
++        }
++        throw new Error(msg);
++      }
++    } catch (error) {
++      console.error("Erro ao salvar OS:", error);
++      toast({
++        title: "Erro",
++        description: error instanceof Error ? error.message : "Erro ao salvar OS",
++        variant: "destructive",
++      });
++    } finally {
++      setSaving(false);
++    }
++  };
++
++  if (loading) {
++    return (
++      <div className="flex items-center justify-center min-h-[400px]">
++        <div className="text-center">
++          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
++          <p>Carregando...</p>
++        </div>
++      </div>
++    );
++  }
++
++  const totals = calculateTotals();
++
++  return (
++    <div className="container mx-auto py-6">
++      <div className="mb-6 flex items-center justify-between">
++        <div>
++          <h1 className="text-2xl font-bold">
++            {isEditing ? "Editar OS" : "Nova Ordem de Serviço"}
++          </h1>
++          {isDuplicating && (
++            <Badge variant="secondary" className="mt-2">
++              Duplicando OS
++            </Badge>
++          )}
++        </div>
++        <Button variant="outline" onClick={() => navigate("/")} className="flex items-center gap-2">
++          <X className="w-4 h-4" />
++          Cancelar
++        </Button>
++      </div>
++
++      {/* Step 1: Cliente */}
++      {currentStep === 1 && (
++        <WizardStep
++          title="Cliente"
++          description="Selecione um cliente existente ou cadastre um novo"
++          currentStep={currentStep}
++          totalSteps={6}
++          onNext={handleNext}
++          onPrevious={handlePrevious}
++          isNextDisabled={!watchedData.cliente.nome || !watchedData.cliente.telefone}
++        >
++          <div className="space-y-4">
++            <div className="flex items-center gap-2 mb-4">
++              <User className="w-5 h-5 text-primary" />
++              <h3 className="text-lg font-medium">Dados do Cliente</h3>
++            </div>
++
++            {clientes.length > 0 && (
++              <div className="space-y-2">
++                <Label>Selecionar Cliente Existente</Label>
++                <Select
++                  value={watchedData.cliente.id || ""}
++                  onValueChange={(value) => {
++                    if (value) {
++                      const cliente = clientes.find(c => c.id === value);
++                      if (cliente) {
++                        setValue("cliente", {
++                          id: cliente.id,
++                          nome: cliente.nome,
++                          telefone: cliente.telefone,
++                          email: cliente.email || "",
++                        } as any);
++                      }
++                    }
++                  }}
++                >
++                  <SelectTrigger>
++                    <SelectValue placeholder="Escolha um cliente..." />
++                  </SelectTrigger>
++                  <SelectContent>
++                    {clientes.map((cliente) => (
++                      <SelectItem key={cliente.id} value={cliente.id}>
++                        {cliente.nome} - {cliente.telefone}
++                      </SelectItem>
++                    ))}
++                  </SelectContent>
++                </Select>
++              </div>
++            )}
++
++            <Separator className="my-4" />
++
++            <div className="grid gap-4 md:grid-cols-2">
++              <Controller
++                name="cliente.nome"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Nome *</Label>
++                    <Input {...field} placeholder="Nome completo do cliente" />
++                    {errors.cliente?.nome && (
++                      <p className="text-sm text-destructive">{errors.cliente.nome.message}</p>
++                    )}
++                  </div>
++                )}
++              />
++
++              <Controller
++                name="cliente.telefone"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Telefone *</Label>
++                    <Input 
++                      {...field} 
++                      placeholder="(11) 99999-9999"
++                      onChange={(e) => {
++                        const formatted = formatPhoneNumber(e.target.value);
++                        field.onChange(formatted);
++                      }}
++                      onBlur={(e) => {
++                        const normalized = normalizePhoneNumber(e.target.value);
++                        field.onChange(normalized);
++                      }}
++                    />
++                    {errors.cliente?.telefone && (
++                      <p className="text-sm text-destructive">{errors.cliente.telefone.message}</p>
++                    )}
++                  </div>
++                )}
++              />
++
++              <Controller
++                name="cliente.email"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Email</Label>
++                    <Input {...field} placeholder="email@exemplo.com" />
++                    {errors.cliente?.email && (
++                      <p className="text-sm text-destructive">{errors.cliente.email.message}</p>
++                    )}
++                  </div>
++                )}
++              />
++            </div>
++          </div>
++        </WizardStep>
++      )}
++
++      {/* Step 2: Equipamento */}
++      {currentStep === 2 && (
++        <WizardStep
++          title="Equipamento"
++          description="Informe os dados do equipamento"
++          currentStep={currentStep}
++          totalSteps={6}
++          onNext={handleNext}
++          onPrevious={handlePrevious}
++          isNextDisabled={!watchedData.equipamento.tipo}
++        >
++          <div className="space-y-4">
++            <div className="flex items-center gap-2 mb-4">
++              <Wrench className="w-5 h-5 text-primary" />
++              <h3 className="text-lg font-medium">Dados do Equipamento</h3>
++            </div>
++
++            <div className="grid gap-4 md:grid-cols-2">
++              <Controller
++                name="equipamento.tipo"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Tipo *</Label>
++                    <Input {...field} placeholder="Ex: Smartphone, Notebook, TV" />
++                    {errors.equipamento?.tipo && (
++                      <p className="text-sm text-destructive">{errors.equipamento.tipo.message}</p>
++                    )}
++                  </div>
++                )}
++              />
++
++              <Controller
++                name="equipamento.marca"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Marca</Label>
++                    <Input {...field} placeholder="Ex: Samsung, Apple, LG" />
++                  </div>
++                )}
++              />
++
++              <Controller
++                name="equipamento.modelo"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Modelo</Label>
++                    <Input {...field} placeholder="Ex: Galaxy S21, iPhone 12" />
++                  </div>
++                )}
++              />
++
++              <Controller
++                name="equipamento.numero_serie"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Número de Série</Label>
++                    <Input {...field} placeholder="Número de série do equipamento" />
++                  </div>
++                )}
++              />
++            </div>
++          </div>
++        </WizardStep>
++      )}
++
++      {/* Step 3: Serviços */}
++      {currentStep === 3 && (
++        <WizardStep
++          title="Serviços"
++          description="Adicione os serviços que serão realizados"
++          currentStep={currentStep}
++          totalSteps={6}
++          onNext={handleNext}
++          onPrevious={handlePrevious}
++        >
++          <div className="space-y-4">
++            <div className="flex items-center gap-2 mb-4">
++              <Wrench className="w-5 h-5 text-primary" />
++              <h3 className="text-lg font-medium">Serviços</h3>
++            </div>
++
++            <ItemList
++              items={watchedData.servicos}
++              onAddItem={() => setValue("servicos", [...watchedData.servicos, { nome_servico: "", valor_unitario: 0, valor_total: 0 }])}
++              onRemoveItem={(index) => setValue("servicos", watchedData.servicos.filter((_, i) => i !== index))}
++              onUpdateItem={updateServicoTotal}
++              addButtonText="Adicionar Serviço"
++              emptyMessage="Nenhum serviço adicionado. Clique em 'Adicionar Serviço' para começar."
++            >
++              {(servico, index, updateField) => (
++                <div className="grid gap-4 md:grid-cols-3">
++                  <div className="space-y-2">
++                    <Label>Nome do Serviço *</Label>
++                    <Input
++                      value={servico.nome_servico}
++                      onChange={(e) => updateField("nome_servico", e.target.value)}
++                      placeholder="Ex: Troca de tela"
++                    />
++                  </div>
++                  <MoneyInput
++                    label="Valor *"
++                    value={servico.valor_unitario}
++                    onChange={(value) => updateField("valor_unitario", value)}
++                    placeholder="0,00"
++                  />
++                  <MoneyInput
++                    label="Total"
++                    value={servico.valor_total}
++                    onChange={() => {}} // Read-only for services
++                    disabled
++                  />
++                </div>
++              )}
++            </ItemList>
++          </div>
++        </WizardStep>
++      )}
++
++      {/* Step 4: Produtos */}
++      {currentStep === 4 && (
++        <WizardStep
++          title="Produtos"
++          description="Adicione os produtos utilizados"
++          currentStep={currentStep}
++          totalSteps={6}
++          onNext={handleNext}
++          onPrevious={handlePrevious}
++        >
++          <div className="space-y-4">
++            <div className="flex items-center gap-2 mb-4">
++              <Package className="w-5 h-5 text-primary" />
++              <h3 className="text-lg font-medium">Produtos</h3>
++            </div>
++
++            <ItemList
++              items={watchedData.produtos}
++              onAddItem={() => setValue("produtos", [...watchedData.produtos, { nome_produto: "", quantidade: 1, valor_unitario: 0, valor_total: 0 }])}
++              onRemoveItem={(index) => setValue("produtos", watchedData.produtos.filter((_, i) => i !== index))}
++              onUpdateItem={updateProdutoTotal}
++              addButtonText="Adicionar Produto"
++              emptyMessage="Nenhum produto adicionado. Clique em 'Adicionar Produto' para começar."
++            >
++              {(produto, index, updateField) => (
++                <div className="grid gap-4 md:grid-cols-4">
++                  <div className="space-y-2">
++                    <Label>Nome do Produto *</Label>
++                    <Input
++                      value={produto.nome_produto}
++                      onChange={(e) => updateField("nome_produto", e.target.value)}
++                      placeholder="Ex: Tela LCD"
++                    />
++                  </div>
++                  <div className="space-y-2">
++                    <Label>Quantidade *</Label>
++                    <Input
++                      type="number"
++                      min="1"
++                      value={produto.quantidade}
++                      onChange={(e) => updateField("quantidade", parseInt(e.target.value) || 1)}
++                    />
++                  </div>
++                  <MoneyInput
++                    label="Valor Unitário *"
++                    value={produto.valor_unitario}
++                    onChange={(value) => updateField("valor_unitario", value)}
++                    placeholder="0,00"
++                  />
++                  <MoneyInput
++                    label="Total"
++                    value={produto.valor_total}
++                    onChange={() => {}} // Read-only, calculated automatically
++                    disabled
++                  />
++                </div>
++              )}
++            </ItemList>
++          </div>
++        </WizardStep>
++      )}
++
++      {/* Step 5: Despesas */}
++      {currentStep === 5 && (
++        <WizardStep
++          title="Despesas"
++          description="Adicione despesas relacionadas ao serviço"
++          currentStep={currentStep}
++          totalSteps={6}
++          onNext={handleNext}
++          onPrevious={handlePrevious}
++        >
++          <div className="space-y-4">
++            <div className="flex items-center gap-2 mb-4">
++              <Receipt className="w-5 h-5 text-primary" />
++              <h3 className="text-lg font-medium">Despesas</h3>
++            </div>
++
++            <ItemList
++              items={watchedData.despesas}
++              onAddItem={() => setValue("despesas", [...watchedData.despesas, { descricao: "", valor: 0 }])}
++              onRemoveItem={(index) => setValue("despesas", watchedData.despesas.filter((_, i) => i !== index))}
++              onUpdateItem={(index, field, value) => {
++                const despesas = [...watchedData.despesas];
++                despesas[index] = { ...despesas[index], [field]: value };
++                setValue("despesas", despesas);
++              }}
++              addButtonText="Adicionar Despesa"
++              emptyMessage="Nenhuma despesa adicionada. Clique em 'Adicionar Despesa' para começar."
++            >
++              {(despesa, index, updateField) => (
++                <div className="grid gap-4 md:grid-cols-2">
++                  <div className="space-y-2">
++                    <Label>Descrição *</Label>
++                    <Input
++                      value={despesa.descricao}
++                      onChange={(e) => updateField("descricao", e.target.value)}
++                      placeholder="Ex: Transporte"
++                    />
++                  </div>
++                  <MoneyInput
++                    label="Valor *"
++                    value={despesa.valor}
++                    onChange={(value) => updateField("valor", value)}
++                    placeholder="0,00"
++                  />
++                </div>
++              )}
++            </ItemList>
++          </div>
++        </WizardStep>
++      )}
++
++      {/* Step 6: Resumo & Pagamento */}
++      {currentStep === 6 && (
++        <WizardStep
++          title="Resumo & Pagamento"
++          description="Revise os dados e finalize a OS"
++          currentStep={currentStep}
++          totalSteps={6}
++          onNext={() => {}}
++          onPrevious={handlePrevious}
++          showStepIndicator={false}
++        >
++          <div className="space-y-6">
++            <div className="flex items-center gap-2 mb-4">
++              <FileText className="w-5 h-5 text-primary" />
++              <h3 className="text-lg font-medium">Resumo & Pagamento</h3>
++            </div>
++
++            {/* Resumo */}
++            <Card>
++              <CardHeader>
++                <CardTitle>Resumo dos Totais</CardTitle>
++              </CardHeader>
++              <CardContent className="space-y-3">
++                <div className="flex justify-between">
++                  <span>Serviços ({watchedData.servicos.length} itens):</span>
++                  <span className="font-medium">{formatCurrency(totals.total_servicos)}</span>
++                </div>
++                <div className="flex justify-between">
++                  <span>Produtos ({watchedData.produtos.length} itens):</span>
++                  <span className="font-medium">{formatCurrency(totals.total_produtos)}</span>
++                </div>
++                <div className="flex justify-between">
++                  <span>Despesas ({watchedData.despesas.length} itens):</span>
++                  <span className="font-medium">{formatCurrency(totals.total_despesas)}</span>
++                </div>
++                <Separator />
++                <div className="flex justify-between text-lg font-bold">
++                  <span>Total Geral:</span>
++                  <span className="text-primary">{formatCurrency(totals.total_geral)}</span>
++                </div>
++              </CardContent>
++            </Card>
++
++            {/* Forma de pagamento */}
++            <div className="grid gap-4 md:grid-cols-2">
++              <Controller
++                name="forma_pagamento"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Forma de Pagamento *</Label>
++                    <Select value={field.value} onValueChange={field.onChange}>
++                      <SelectTrigger>
++                        <SelectValue placeholder="Selecione..." />
++                      </SelectTrigger>
++                      <SelectContent>
++                        <SelectItem value="dinheiro">Dinheiro</SelectItem>
++                        <SelectItem value="pix">PIX</SelectItem>
++                        <SelectItem value="cartao_debito">Cartão de Débito</SelectItem>
++                        <SelectItem value="cartao_credito">Cartão de Crédito</SelectItem>
++                        <SelectItem value="boleto">Boleto</SelectItem>
++                        <SelectItem value="transferencia">Transferência</SelectItem>
++                      </SelectContent>
++                    </Select>
++                    {errors.forma_pagamento && (
++                      <p className="text-sm text-destructive">{errors.forma_pagamento.message}</p>
++                    )}
++                  </div>
++                )}
++              />
++
++              <Controller
++                name="garantia"
++                control={control}
++                render={({ field }) => (
++                  <div className="space-y-2">
++                    <Label>Garantia</Label>
++                    <Input {...field} placeholder="Ex: 90 dias" />
++                  </div>
++                )}
++              />
++            </div>
++
++            <Controller
++              name="observacoes"
++              control={control}
++              render={({ field }) => (
++                <div className="space-y-2">
++                  <Label>Observações</Label>
++                  <Textarea
++                    {...field}
++                    placeholder="Observações adicionais sobre o serviço..."
++                    rows={3}
++                  />
++                </div>
++              )}
++            />
++
++            {/* Ações finais */}
++            <div className="flex justify-between gap-4 pt-6 border-t">
++              <Button
++                type="button"
++                variant="outline"
++                onClick={handlePrevious}
++                disabled={saving}
++                className="flex items-center gap-2"
++              >
++                Anterior
++              </Button>
++
++              <div className="flex gap-4">
++                <Button
++                  type="button"
++                  variant="outline"
++                  onClick={() => {
++                    // Log rascunho save attempts for debugging
++                    log('click:rascunho');
++                    saveOS("rascunho");
++                  }}
++                  disabled={saving}
++                  className="flex items-center gap-2"
++                >
++                  <Save className="w-4 h-4" />
++                  {saving ? "Salvando..." : "Salvar como Rascunho"}
++                </Button>
++
++                <Button
++                  type="button"
++                  onClick={() => {
++                    // Validate payment selection before final save
++                    if (!watchedData.forma_pagamento) {
++                      toast({
++                        title: "Validação",
++                        description: "Selecione uma forma de pagamento antes de finalizar.",
++                        variant: "destructive",
++                      });
++                      return;
++                    }
++                    // Log final save attempts for debugging
++                    log('click:aberta');
++                    saveOS("aberta");
++                  }}
++                  disabled={saving || (watchedData.servicos.length === 0 && watchedData.produtos.length === 0)}
++                  className="flex items-center gap-2"
++                >
++                  <CheckCircle className="w-4 h-4" />
++                  {saving ? "Salvando..." : "Salvar e Finalizar"}
++                </Button>
++              </div>
++            </div>
++          </div>
++        </WizardStep>
++      )}
++    </div>
++  );
++}
+\ No newline at end of file
+diff --git a/repo/supabase/functions/api-os/index.ts b/repo/supabase/functions/api-os/index.ts
+new file mode 100644
+index 0000000..089e7c0
+--- /dev/null
++++ b/repo/supabase/functions/api-os/index.ts
+@@ -0,0 +1,411 @@
++import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
++import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.53.0';
++
++// CORS headers shared by all responses
++const corsHeaders = {
++  'Access-Control-Allow-Origin': '*',
++  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, idempotency-key',
++};
++
++// Initialize Supabase client using environment variables injected by the platform
++const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
++const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
++const supabase = createClient(supabaseUrl, supabaseAnonKey);
++
++// Helper function to generate a human readable OS number (e.g. OS-202501-00001)
++function generateOSNumber(): string {
++  const now = new Date();
++  const year = now.getFullYear();
++  const month = String(now.getMonth() + 1).padStart(2, '0');
++  const randomNumber = Math.floor(Math.random() * 99999) + 1;
++  const formattedNumber = String(randomNumber).padStart(5, '0');
++  return `OS-${year}${month}-${formattedNumber}`;
++}
++
++// Basic payload validation for OS objects. Returns an array of error strings.
++function validateOS(data: any) {
++  const errors: string[] = [];
++  if (!data.cliente_id) errors.push("Cliente é obrigatório");
++  if (!data.data) errors.push("Data é obrigatório");
++  if (!data.forma_pagamento) errors.push("Forma de pagamento é obrigatória");
++
++  // Must have at least one service or product
++  const hasServices = data.servicos && data.servicos.length > 0;
++  const hasProducts = data.produtos && data.produtos.length > 0;
++  if (!hasServices && !hasProducts) {
++    errors.push("Deve ter pelo menos um serviço ou produto");
++  }
++  if (data.total_geral < 0) errors.push("Total geral deve ser >= 0");
++  return errors;
++}
++
++// Main entrypoint for the Deno edge function
++serve(async (req) => {
++  // Respond to CORS preflight requests immediately
++  if (req.method === 'OPTIONS') {
++    return new Response(null, { headers: corsHeaders });
++  }
++
++  try {
++    const url = new URL(req.url);
++    const pathParts = url.pathname.split('/');
++    const osId = pathParts[pathParts.length - 1];
++
++    switch (req.method) {
++      case 'POST':
++        // Handle sync endpoint separately
++        if (url.pathname.endsWith('/sync')) {
++          const { usuario_id, changes } = await req.json();
++          const applied: string[] = [];
++          const conflicts: any[] = [];
++          for (const change of changes) {
++            try {
++              await supabase
++                .from('ordens_servico')
++                .upsert(change)
++                .eq('id', change.id);
++              applied.push(change.id);
++            } catch (error) {
++              conflicts.push({ id: change.id, error: (error as any).message });
++            }
++          }
++          return new Response(
++            JSON.stringify({ ok: true, data: { applied, conflicts } }),
++            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
++          );
++        }
++
++        // Normal creation of a new OS
++        {
++          const data = await req.json();
++          console.log("[api-os] Payload recebido:", JSON.stringify(data, null, 2));
++          const validationErrors = validateOS(data);
++          if (validationErrors.length > 0) {
++            console.log("[api-os] Erros de validação:", validationErrors);
++            return new Response(
++              JSON.stringify({
++                ok: false,
++                error: {
++                  code: "VALIDATION_ERROR",
++                  message: "Dados inválidos",
++                  details: validationErrors
++                }
++              }),
++              {
++                status: 400,
++                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
++              }
++            );
++          }
++          try {
++            const osNumero = generateOSNumber();
++            // Remove despesas from payload before insert to avoid column mismatch
++            const { despesas, ...osPayload } = data;
++            const { data: osData, error: osError } = await supabase
++              .from('ordens_servico')
++              .insert([{
++                ...osPayload,
++                os_numero_humano: osNumero,
++                sync_status: 'synced'
++              }])
++              .select()
++              .single();
++            if (osError) {
++              if ((osError as any).code === '23505') {
++                // Unique constraint violation on os_numero_humano
++                return new Response(
++                  JSON.stringify({
++                    ok: false,
++                    error: {
++                      code: "DUPLICATE_NUMBER",
++                      message: "Número da OS já existe"
++                    }
++                  }),
++                  {
++                    status: 409,
++                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
++                  }
++                );
++              }
++              console.log("[api-os] Erro ao inserir OS:", osError, data);
++              throw osError;
++            }
++            // Insert child records in their respective tables
++            if (data.equipamento) {
++              await supabase.from('equipamento_os').insert([{
++                ...data.equipamento,
++                ordem_servico_id: osData.id
++              }]);
++            }
++            if (data.servicos?.length > 0) {
++              await supabase.from('servicos_os').insert(
++                data.servicos.map((s: any) => ({
++                  ...s,
++                  ordem_servico_id: osData.id
++                }))
++              );
++            }
++            if (data.produtos?.length > 0) {
++              await supabase.from('produtos_os').insert(
++                data.produtos.map((p: any) => ({
++                  ...p,
++                  ordem_servico_id: osData.id
++                }))
++              );
++            }
++            if (despesas?.length > 0) {
++              await supabase.from('despesas_os').insert(
++                despesas.map((d: any) => ({
++                  ...d,
++                  ordem_servico_id: osData.id
++                }))
++              );
++            }
++            return new Response(
++              JSON.stringify({ ok: true, data: osData }),
++              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
++            );
++          } catch (e) {
++            console.log("[api-os] Erro inesperado ao salvar OS:", e, data);
++            return new Response(
++              JSON.stringify({
++                ok: false,
++                error: {
++                  code: "INTERNAL_ERROR",
++                  message: (e as any).message,
++                  stack: (e as any).stack
++                }
++              }),
++              {
++                status: 500,
++                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
++              }
++            );
++          }
++        }
++
++      case 'GET':
++        // Fetch a single OS with related records
++        if (osId && osId !== 'api-os') {
++          const { data, error } = await supabase
++            .from('ordens_servico')
++            .select(`
++              *,
++              clientes(*),
++              equipamento_os(*),
++              servicos_os(*),
++              produtos_os(*),
++              despesas_os(*),
++              fotos_os(*)
++            `)
++            .eq('id', osId)
++            .is('deleted_at', null)
++            .single();
++          if (error) {
++            return new Response(
++              JSON.stringify({
++                ok: false,
++                error: { code: "NOT_FOUND", message: "OS não encontrada" }
++              }),
++              {
++                status: 404,
++                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
++              }
++            );
++          }
++          return new Response(
++            JSON.stringify({ ok: true, data }),
++            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
++          );
++        }
++        // Otherwise list OS with optional filters
++        {
++          const status = url.searchParams.get('status');
++          const dateFrom = url.searchParams.get('date_from');
++          const dateTo = url.searchParams.get('date_to');
++          const query = url.searchParams.get('query');
++          const page = parseInt(url.searchParams.get('page') || '1');
++          const size = parseInt(url.searchParams.get('size') || '20');
++          let queryBuilder: any = supabase
++            .from('ordens_servico')
++            .select(`
++              *,
++              clientes(nome, telefone)
++            `, { count: 'exact' })
++            .is('deleted_at', null)
++            .order('created_at', { ascending: false });
++          if (status) queryBuilder = queryBuilder.eq('status', status);
++          if (dateFrom) queryBuilder = queryBuilder.gte('data', dateFrom);
++          if (dateTo) queryBuilder = queryBuilder.lte('data', dateTo);
++          if (query) {
++            queryBuilder = queryBuilder.or(
++              `os_numero_humano.ilike.%${query}%,clientes.nome.ilike.%${query}%`
++            );
++          }
++          const { data, error, count } = await queryBuilder
++            .range((page - 1) * size, page * size - 1);
++          if (error) throw error;
++          return new Response(
++            JSON.stringify({
++              ok: true,
++              data: {
++                items: data,
++                pagination: {
++                  page,
++                  size,
++                  total: count,
++                  pages: Math.ceil((count || 0) / size)
++                }
++              }
++            }),
++            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
++          );
++        }
++
++      case 'PUT':
++        // Update an existing OS and its related records atomically
++        if (osId) {
++          const data = await req.json();
++          const validationErrors = validateOS(data);
++          if (validationErrors.length > 0) {
++            return new Response(
++              JSON.stringify({
++                ok: false,
++                error: {
++                  code: "VALIDATION_ERROR",
++                  message: "Dados inválidos",
++                  details: validationErrors
++                }
++              }),
++              {
++                status: 400,
++                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
++              }
++            );
++          }
++          // Destructure nested fields out of the payload so only base columns are updated
++          const { equipamento, servicos, produtos, despesas, ...osPayload } = data;
++          // Update the main OS record
++          const { data: osData, error: osError } = await supabase
++            .from('ordens_servico')
++            .update({ ...osPayload, sync_status: 'synced' })
++            .eq('id', osId)
++            .select()
++            .single();
++          if (osError) {
++            console.log("[api-os] Erro ao atualizar OS:", osError);
++            return new Response(
++              JSON.stringify({
++                ok: false,
++                error: {
++                  code: "INTERNAL_ERROR",
++                  message: osError.message,
++                  details: osError
++                }
++              }),
++              {
++                status: 500,
++                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
++              }
++            );
++          }
++          // Replace child records: delete old ones then insert new ones
++          await supabase.from('equipamento_os').delete().eq('ordem_servico_id', osId);
++          if (equipamento) {
++            await supabase.from('equipamento_os').insert([{
++              ...equipamento,
++              ordem_servico_id: osId
++            }]);
++          }
++          await supabase.from('servicos_os').delete().eq('ordem_servico_id', osId);
++          if (servicos?.length > 0) {
++            await supabase.from('servicos_os').insert(
++              servicos.map((s: any) => ({
++                ...s,
++                ordem_servico_id: osId
++              }))
++            );
++          }
++          await supabase.from('produtos_os').delete().eq('ordem_servico_id', osId);
++          if (produtos?.length > 0) {
++            await supabase.from('produtos_os').insert(
++              produtos.map((p: any) => ({
++                ...p,
++                ordem_servico_id: osId
++              }))
++            );
++          }
++          await supabase.from('despesas_os').delete().eq('ordem_servico_id', osId);
++          if (despesas?.length > 0) {
++            await supabase.from('despesas_os').insert(
++              despesas.map((d: any) => ({
++                ...d,
++                ordem_servico_id: osId
++              }))
++            );
++          }
++          return new Response(
++            JSON.stringify({ ok: true, data: osData }),
++            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
++          );
++        }
++        break;
++
++      case 'DELETE':
++        // Soft delete an OS by setting deleted_at
++        if (osId) {
++          const { error } = await supabase
++            .from('ordens_servico')
++            .update({ deleted_at: new Date().toISOString() })
++            .eq('id', osId);
++          if (error) {
++            return new Response(
++              JSON.stringify({
++                ok: false,
++                error: {
++                  code: "INTERNAL_ERROR",
++                  message: error.message
++                }
++              }),
++              {
++                status: 500,
++                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
++              }
++            );
++          }
++          return new Response(
++            JSON.stringify({ ok: true, data: { deleted: true } }),
++            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
++          );
++        }
++        break;
++
++      default:
++        return new Response(
++          JSON.stringify({
++            ok: false,
++            error: { code: "METHOD_NOT_ALLOWED", message: "Método não permitido" }
++          }),
++          {
++            status: 405,
++            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
++          }
++        );
++    }
++  } catch (error) {
++    console.error('Error in OS API:', error);
++    return new Response(
++      JSON.stringify({
++        ok: false,
++        error: {
++          code: "INTERNAL_ERROR",
++          message: "Erro interno do servidor"
++        }
++      }),
++      {
++        status: 500,
++        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
++      }
++    );
++  }
++});
+\ No newline at end of file
+-- 
+2.39.5

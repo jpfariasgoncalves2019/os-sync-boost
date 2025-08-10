@@ -1,0 +1,13 @@
+project_id = "ppxexzbmaepudhkqfozt"
+
+[functions.api-health]
+verify_jwt = false
+
+[functions.api-os]
+verify_jwt = false
+
+[functions.api-clientes]
+verify_jwt = false
+
+[functions.user-openai-key]
+verify_jwt = false
