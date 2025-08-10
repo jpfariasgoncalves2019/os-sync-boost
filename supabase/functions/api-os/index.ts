@@ -163,6 +163,7 @@ serve(async (req) => {
             .select(`
               *,
               clientes(nome, telefone, email),
+              equipamento_os(*),
               servicos_os(nome_servico),
               produtos_os(nome_produto)
             `, { count: 'exact' })

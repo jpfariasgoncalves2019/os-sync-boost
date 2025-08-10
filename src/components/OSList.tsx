@@ -176,7 +176,7 @@ export default function OSList() {
                     <div className="text-sm text-muted-foreground">
                       <div><strong>Nome:</strong> {order.clientes?.nome || 'Cliente não encontrado'}</div>
                       <div><strong>Telefone:</strong> {order.clientes?.telefone || 'Não informado'}</div>
-                      <div><strong>Email:</strong> {order.clientes?.email || 'Não informado'}</div>
+                      <div><strong>Equipamento:</strong> {order.equipamento?.tipo || 'Não informado'}</div>
                     </div>
                   </div>
                   <DropdownMenu>
