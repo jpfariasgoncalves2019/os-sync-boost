@@ -16,7 +16,7 @@ const App = () => (
   <ThemeProvider>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <BrowserRouter>
+  <BrowserRouter>
           <Routes>
             <Route path="/" element={<Layout />}>
             <Route index element={<ListaOS />} />
