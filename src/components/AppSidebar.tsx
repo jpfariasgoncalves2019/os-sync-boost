@@ -37,6 +37,12 @@ const menuItems = [
   { title: "Produtos", url: "/produtos", icon: Package, placeholder: true },
   { title: "Serviços", url: "/servicos", icon: Wrench, placeholder: true },
   { title: "Relatórios (PRO)", url: "/relatorios", icon: BarChart3, placeholder: true, isPro: true },
+  // IA
+  { title: "Assistente IA", url: "/assistente-ia", icon: HelpCircle },
+  { title: "Análise IA", url: "/ia-analise", icon: BarChart3 },
+  { title: "Automação IA", url: "/ia-automacao", icon: Wrench },
+  { title: "Geração IA", url: "/ia-geracao", icon: FileText },
+  { title: "Chatbot", url: "/chatbot", icon: Users },
   { title: "Ajuda e Suporte", url: "/ajuda", icon: HelpCircle },
   { title: "Configurações", url: "/configuracoes", icon: Settings },
   { title: "Avalie este aplicativo", url: "/avaliar", icon: Star, isExternal: true },

@@ -27,12 +27,12 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  if (!usuario_id) {
-    return new Response(
-      JSON.stringify({ ok: false, error: { code: 'NO_USER', message: 'Usuário não autenticado' } }),
-      { status: 401, headers: corsHeaders }
-    );
-  }
+  // if (!usuario_id) {
+  //   return new Response(
+  //     JSON.stringify({ ok: false, error: { code: 'NO_USER', message: 'Usuário não autenticado' } }),
+  //     { status: 401, headers: corsHeaders }
+  //   );
+  // }
 
   if (req.method === 'GET') {
     // Buscar dados da empresa
