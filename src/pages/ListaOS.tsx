@@ -27,11 +27,14 @@ export default function ListaOS() {
   const loadOrders = async () => {
     setLoading(true);
     try {
+      // Garante paginação válida
+      const pageNum = Number.isFinite(page) && page > 0 ? page : 1;
+      const sizeNum = 20;
       const response = await apiClient.listOS({
         ...filters,
         ...(searchQuery && { query: searchQuery }),
-        page,
-        size: 20,
+        page: pageNum,
+        size: sizeNum,
       });
 
       if (response.ok && response.data) {
@@ -44,10 +47,10 @@ export default function ListaOS() {
           variant: "destructive",
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Erro de conexão",
-        description: "Não foi possível carregar as OS. Tente novamente.",
+        description: error?.message || "Não foi possível carregar as OS. Tente novamente.",
         variant: "destructive",
       });
     } finally {
@@ -60,7 +63,9 @@ export default function ListaOS() {
   }, [filters, searchQuery, page]);
 
   const handleSearch = (value: string) => {
-    setSearchQuery(value);
+    // Sanitiza: remove espaços à esquerda e força minúsculo
+    const term = value.toLowerCase().trimStart();
+    setSearchQuery(term);
     setPage(1);
   };
 

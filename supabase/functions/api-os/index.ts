@@ -1,3 +1,97 @@
+import { serve } from "https://deno.land/std/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js";
+
+const allowedOrigins = new Set([
+  "https://preview--os-sync-boost.lovable.app",
+  "https://progestao.netlify.app",
+  "http://localhost:8080",
+  "http://127.0.0.1:8080",
+]);
+
+function cors(origin: string | null) {
+  const allow = origin && allowedOrigins.has(origin) ? origin : "https://progestao.netlify.app";
+  return {
+    "Access-Control-Allow-Origin": allow,
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, idempotency-key",
+    "Vary": "Origin",
+  };
+}
+
+const supabase = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_ANON_KEY")!
+);
+
+serve(async (req: Request) => {
+  const origin = req.headers.get("origin");
+  const corsHeaders = cors(origin);
+
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  try {
+    const url = new URL(req.url);
+    const parts = url.pathname.split("/").filter(Boolean); // .../functions/v1/api-os[/id]
+    const last = parts[parts.length - 1];
+    const id = last !== "api-os" ? last : null;
+
+    if (req.method === "GET") {
+      if (id) {
+        const { data, error } = await supabase.from("clientes").select("*").eq("id", id).single();
+        if (error || !data) {
+          console.error("[api-os] Erro ao buscar cliente:", error);
+          return new Response(JSON.stringify({ ok:false, error:{ code:"NOT_FOUND", message:"Cliente não encontrado", details: error?.message || error }}), { status:404, headers:{ ...corsHeaders, "Content-Type":"application/json" }});
+        }
+        return new Response(JSON.stringify({ ok:true, data }), { headers:{ ...corsHeaders, "Content-Type":"application/json" }});
+      }
+
+      let page = Number(url.searchParams.get("page") || "1");
+      let sizeRaw = Number(url.searchParams.get("size") || "20");
+      if (!Number.isFinite(page) || page < 1) page = 1;
+      if (!Number.isFinite(sizeRaw) || sizeRaw < 1) sizeRaw = 20;
+      const size = Math.min(100, Math.max(1, sizeRaw));
+      const q = (url.searchParams.get("query") || "").trim();
+
+      if (isNaN(page) || isNaN(size)) {
+        return new Response(JSON.stringify({ ok:false, error:{ code:"INVALID_PARAMS", message:"Parâmetros de paginação inválidos" }}), { status:400, headers:{ ...corsHeaders, "Content-Type":"application/json" }});
+      }
+
+      let qb = supabase.from("clientes").select("*", { count:"exact" }).order("nome", { ascending:true });
+      if (q) qb = qb.or(`nome.ilike.%${q}%,telefone.ilike.%${q}%,email.ilike.%${q}%`);
+
+      const from = (page - 1) * size;
+      const to = from + size - 1;
+
+      console.log("[api-os] GET list", { page, size, q, from, to });
+
+      try {
+        const { data: items, error, count } = await qb.range(from, to);
+        if (error) {
+          console.error("[api-os] Erro ao buscar lista de clientes:", error);
+          return new Response(JSON.stringify({ ok:false, error:{ code:"QUERY_ERROR", message:error.message || error }}), { status:400, headers:{ ...corsHeaders, "Content-Type":"application/json" }});
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            items: items ?? [],
+            pagination: { page, size, total: count || 0, pages: Math.ceil((count || 0)/size) }
+          }
+        }), { headers:{ ...corsHeaders, "Content-Type":"application/json" }});
+      } catch (err) {
+        console.error("[api-os] Erro inesperado na busca:", err);
+        return new Response(JSON.stringify({ ok:false, error:{ code:"INTERNAL_ERROR", message: err?.message || "Erro interno" }}), { status:500, headers:{ ...corsHeaders, "Content-Type":"application/json" }});
+      }
+    }
+
+    return new Response(JSON.stringify({ ok:false, error:{ code:"METHOD_NOT_ALLOWED", message:"Método não suportado." }}), { status:405, headers:{ ...corsHeaders, "Content-Type":"application/json" }});
+
+  } catch (err) {
+    console.error("Error in api-os:", err);
+    return new Response(JSON.stringify({ ok:false, error:{ code:"INTERNAL_ERROR", message:"Erro interno do servidor" } }), { status:500, headers:{ ...corsHeaders, "Content-Type":"application/json" }});
+  }
+});
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.53.0';
 import { z } from 'https://esm.sh/zod@3.23.8';
