@@ -15,6 +15,7 @@ interface WizardStepProps {
   previousLabel?: string;
   isNextDisabled?: boolean;
   showStepIndicator?: boolean;
+  showPrevious?: boolean;
 }
 
 export function WizardStep({
@@ -29,6 +30,7 @@ export function WizardStep({
   previousLabel = "Anterior", 
   isNextDisabled = false,
   showStepIndicator = true,
+  showPrevious = true,
 }: WizardStepProps) {
   return (
     <div className="max-w-4xl mx-auto p-4 space-y-6">
@@ -65,16 +67,17 @@ export function WizardStep({
           {children}
 
           <div className="flex justify-between pt-6 border-t">
-            <Button
-              variant="outline"
-              onClick={onPrevious}
-              disabled={currentStep === 1}
-              className="flex items-center gap-2"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              {previousLabel}
-            </Button>
-
+            {showPrevious ? (
+              <Button
+                variant="outline"
+                onClick={onPrevious}
+                disabled={currentStep === 1}
+                className="flex items-center gap-2"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                {previousLabel}
+              </Button>
+            ) : <div />}
             <Button
               onClick={onNext}
               disabled={isNextDisabled}

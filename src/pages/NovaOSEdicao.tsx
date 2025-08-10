@@ -6,6 +6,7 @@ import { z } from "zod";
 import { WizardStep } from "@/components/WizardStep";
 import { ItemList, MoneyInput } from "@/components/ItemList";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -65,6 +66,7 @@ export default function NovaOSEdicao() {
   const { toast } = useToast();
   
   const [currentStep, setCurrentStep] = useState(1);
+  const [showCancelModal, setShowCancelModal] = useState(false);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -557,10 +559,27 @@ export default function NovaOSEdicao() {
             </Badge>
           )}
         </div>
-        <Button variant="outline" onClick={() => navigate("/")} className="flex items-center gap-2">
+        <Button variant="outline" onClick={() => setShowCancelModal(true)} className="flex items-center gap-2">
           <X className="w-4 h-4" />
           Cancelar
         </Button>
+      {/* Modal de confirmação de cancelamento */}
+      <Dialog open={showCancelModal} onOpenChange={setShowCancelModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancelar Ordem de Serviço</DialogTitle>
+          </DialogHeader>
+          <div>Você tem certeza que deseja cancelar a criação da Ordem de Serviço? Todas as informações inseridas serão perdidas.</div>
+          <DialogFooter className="flex flex-row gap-2 justify-end">
+            <Button variant="destructive" onClick={() => { setShowCancelModal(false); navigate("/"); }}>
+              Sim, cancelar
+            </Button>
+            <Button variant="outline" onClick={() => setShowCancelModal(false)}>
+              Não, continuar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
 
       {/* Step 1: Cliente */}
@@ -571,8 +590,8 @@ export default function NovaOSEdicao() {
           currentStep={currentStep}
           totalSteps={6}
           onNext={handleNext}
-          onPrevious={handlePrevious}
           isNextDisabled={!watchedData.cliente.nome || !watchedData.cliente.telefone}
+          showPrevious={false}
         >
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-4">
@@ -723,6 +742,7 @@ export default function NovaOSEdicao() {
           onNext={handleNext}
           onPrevious={handlePrevious}
           isNextDisabled={!watchedData.equipamento.tipo}
+          showPrevious={true}
         >
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-4">

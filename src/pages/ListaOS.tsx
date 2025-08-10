@@ -283,7 +283,11 @@ export default function ListaOS() {
                     <div className="text-sm text-muted-foreground">
                       <div><strong>Nome:</strong> {order.clientes?.nome || "Cliente não encontrado"}</div>
                       <div><strong>Telefone:</strong> {order.clientes?.telefone || "Não informado"}</div>
-                      <div><strong>Email:</strong> {order.clientes?.email || "Não informado"}</div>
+                      <div><strong>Equipamento:</strong> {
+                        order.equipamento?.tipo
+                        || (Array.isArray(order.equipamento_os) ? order.equipamento_os[0]?.tipo : order.equipamento_os?.tipo)
+                        || "Não informado"
+                      }</div>
                     </div>
                   </div>
                   <DropdownMenu>
@@ -331,30 +335,22 @@ export default function ListaOS() {
               
               <CardContent className="space-y-3">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Data:</span>
+                  <span className="text-muted-foreground">Data de Entrada:</span>
                   <span>{formatDate(order.data)}</span>
                 </div>
-                
-                <div className="flex justify-between items-center">
-                  <StatusDropdown 
-                    osId={order.id}
-                    currentStatus={order.status}
-                    onStatusChange={(newStatus) => {
-                      setOrders(prev => 
-                        prev.map(o => o.id === order.id ? { ...o, status: newStatus as any } : o)
-                      );
-                    }}
-                  />
+                <div className="flex justify-between items-end mt-2 gap-2 flex-wrap">
                   <span className="font-semibold text-lg">{formatCurrency(order.total_geral)}</span>
-                </div>
-                
-                <div className="flex justify-between items-center text-xs">
-                  <Badge variant="outline" className={SYNC_STATUS_CONFIG[order.sync_status].color}>
-                    {SYNC_STATUS_CONFIG[order.sync_status].label}
-                  </Badge>
-                  <span className="text-muted-foreground">
-                    {formatDate(order.updated_at)}
-                  </span>
+                  <div className="w-32 min-w-[120px]">
+                    <StatusDropdown 
+                      osId={order.id}
+                      currentStatus={order.status}
+                      onStatusChange={(newStatus) => {
+                        setOrders(prev => 
+                          prev.map(o => o.id === order.id ? { ...o, status: newStatus as any } : o)
+                        );
+                      }}
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>
