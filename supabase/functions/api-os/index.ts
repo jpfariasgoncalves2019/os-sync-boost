@@ -1,11 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.53.0';
+import { z } from 'https://esm.sh/zod@3.23.8';
+import { corsHeaders, handleCors } from './cors.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, idempotency-key',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
 
 // Initialize Supabase client
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -44,9 +41,9 @@ function validateOS(data: any) {
 
 serve(async (req) => {
   // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsPreflight = handleCors(req);
+  if (corsPreflight) return corsPreflight;
+
 
   try {
     const url = new URL(req.url);
@@ -205,100 +202,168 @@ serve(async (req) => {
           }
         }
 
-      case 'GET':
-        if (osId && osId !== 'api-os') {
-          // Get single OS
-          const { data, error } = await supabase
-            .from('ordens_servico')
-            .select(`
-              *,
-              clientes(*),
-              equipamento_os(*),
-              servicos_os(*),
-              produtos_os(*),
-              despesas_os(*),
-              fotos_os(*)
-            `)
-            .eq('id', osId)
-            .is('deleted_at', null)
-            .single();
-
-          if (error) {
-            return new Response(
-              JSON.stringify({
-                ok: false,
-                error: { code: "NOT_FOUND", message: "OS não encontrada" }
-              }),
-              {
-                status: 404,
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        case 'GET':
+          // Structured logging context
+          const requestId = req.headers.get('idempotency-key') || crypto.randomUUID();
+          const start = Date.now();
+          try {
+            if (osId && osId !== 'api-os') {
+              // Get single OS
+              const { data, error } = await supabase
+                .from('ordens_servico')
+                .select(`
+                  *,
+                  clientes(*),
+                  equipamento_os(*),
+                  servicos_os(*),
+                  produtos_os(*),
+                  despesas_os(*),
+                  fotos_os(*)
+                `)
+                .eq('id', osId)
+                .is('deleted_at', null)
+                .single();
+  
+              if (error) {
+                console.error('[api-os][GET one] error', { requestId, osId, error });
+                return new Response(
+                  JSON.stringify({
+                    ok: false,
+                    error: { code: 'NOT_FOUND', message: 'OS não encontrada' },
+                  }),
+                  { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
               }
-            );
-          }
-
-          return new Response(
-            JSON.stringify({ ok: true, data }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        } else {
-          // List OS with filters
-          const status = url.searchParams.get('status');
-          const dateFrom = url.searchParams.get('date_from');
-          const dateTo = url.searchParams.get('date_to');
-          const query = url.searchParams.get('query');
-          const page = parseInt(url.searchParams.get('page') || '1');
-          const size = parseInt(url.searchParams.get('size') || '20');
-
-          let queryBuilder = supabase
-            .from('ordens_servico')
-            .select(`
-              *,
-              clientes(nome, telefone),
-              servicos_os(nome_servico),
-              produtos_os(nome_produto)
-            `, { count: 'exact' })
-            .is('deleted_at', null)
-            .order('created_at', { ascending: false });
-
-          if (status) {
-            queryBuilder = queryBuilder.eq('status', status);
-          }
-
-          if (dateFrom) {
-            queryBuilder = queryBuilder.gte('data', dateFrom);
-          }
-
-          if (dateTo) {
-            queryBuilder = queryBuilder.lte('data', dateTo);
-          }
-
-          if (query) {
-            queryBuilder = queryBuilder.or(
-              `os_numero_humano.ilike.%${query}%,clientes.nome.ilike.%${query}%,servicos_os.nome_servico.ilike.%${query}%,produtos_os.nome_produto.ilike.%${query}%`
-            );
-          }
-
-          const { data, error, count } = await queryBuilder
-            .range((page - 1) * size, page * size - 1);
-
-          if (error) throw error;
-
-          return new Response(
-            JSON.stringify({
-              ok: true,
-              data: {
-                items: data,
-                pagination: {
-                  page,
-                  size,
-                  total: count,
-                  pages: Math.ceil((count || 0) / size)
+  
+              console.log('[api-os][GET one] success', { requestId, osId, ms: Date.now() - start });
+              return new Response(
+                JSON.stringify({ ok: true, data }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              );
+            } else {
+              // List OS with robust filters and pagination
+              const urlParams = Object.fromEntries(new URL(req.url).searchParams.entries());
+              const schema = z.object({
+                query: z.string().trim().max(100).optional().transform(v => (v && v.length ? v : undefined)),
+                page: z.coerce.number().int().positive().default(1),
+                size: z.coerce.number().int().min(1).max(100).default(20),
+                status: z.enum(['rascunho','aberta','em_andamento','concluida','cancelada']).optional(),
+                date_from: z.string().optional(),
+                date_to: z.string().optional(),
+              });
+  
+              const parsed = schema.safeParse(urlParams);
+              if (!parsed.success) {
+                console.warn('[api-os][GET list] validation_error', { requestId, issues: parsed.error.issues });
+                return new Response(
+                  JSON.stringify({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Parâmetros inválidos', details: parsed.error.issues } }),
+                  { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+              }
+  
+              const { query, page, size, status, date_from, date_to } = parsed.data;
+              const from = (page - 1) * size;
+              const to = page * size - 1;
+  
+              // Base select
+              let listQuery = supabase
+                .from('ordens_servico')
+                .select(`
+                  *,
+                  clientes(nome, telefone, email),
+                  servicos_os(nome_servico),
+                  produtos_os(nome_produto)
+                `, { count: 'exact' })
+                .is('deleted_at', null)
+                .order('created_at', { ascending: false });
+  
+              if (status) listQuery = listQuery.eq('status', status);
+              if (date_from) listQuery = listQuery.gte('data', date_from);
+              if (date_to) listQuery = listQuery.lte('data', date_to);
+  
+              // Advanced search across related entities
+              if (query) {
+                const q = query.replace(/[\n\r\t]/g, ' ').slice(0, 100);
+  
+                // Run sub-queries in parallel to avoid complex or() across relations
+                const [clientIdsRes, osIdsServRes, osIdsProdRes, osIdsNumberRes] = await Promise.all([
+                  supabase.from('clientes').select('id').ilike('nome', `%${q}%`),
+                  supabase.from('servicos_os').select('ordem_servico_id').ilike('nome_servico', `%${q}%`),
+                  supabase.from('produtos_os').select('ordem_servico_id').ilike('nome_produto', `%${q}%`),
+                  supabase.from('ordens_servico').select('id').ilike('os_numero_humano', `%${q}%`),
+                ]);
+  
+                const clientIds = (clientIdsRes.data || []).map((r: any) => r.id);
+                const osIdsFromServ = (osIdsServRes.data || []).map((r: any) => r.ordem_servico_id);
+                const osIdsFromProd = (osIdsProdRes.data || []).map((r: any) => r.ordem_servico_id);
+  
+                let unionIds = new Set<string>([...osIdsFromServ, ...osIdsFromProd, ...((osIdsNumberRes.data || []).map((r: any) => r.id))]);
+  
+                if (clientIds.length) {
+                  const osByClients = await supabase.from('ordens_servico').select('id').in('cliente_id', clientIds);
+                  (osByClients.data || []).forEach((r: any) => unionIds.add(r.id));
                 }
+  
+                const ids = Array.from(unionIds);
+                console.log('[api-os][GET list] search ids', { requestId, q, counts: { clientIds: clientIds.length, osIdsFromServ: osIdsFromServ.length, osIdsFromProd: osIdsFromProd.length, ids: ids.length } });
+  
+                if (ids.length === 0) {
+                  console.log('[api-os][GET list] no matches', { requestId, q });
+                  return new Response(
+                    JSON.stringify({ ok: true, data: { items: [], pagination: { page, size, total: 0, pages: 0 } } }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                  );
+                }
+  
+                listQuery = supabase
+                  .from('ordens_servico')
+                  .select(`
+                    *,
+                    clientes(nome, telefone, email),
+                    servicos_os(nome_servico),
+                    produtos_os(nome_produto)
+                  `, { count: 'exact' })
+                  .in('id', ids)
+                  .is('deleted_at', null)
+                  .order('created_at', { ascending: false });
               }
-            }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
+  
+              const { data, error, count } = await listQuery.range(from, to);
+  
+              if (error) {
+                console.error('[api-os][GET list] error', { requestId, error });
+                return new Response(
+                  JSON.stringify({ ok: false, error: { code: 'QUERY_ERROR', message: error.message } }),
+                  { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+              }
+  
+              const duration = Date.now() - start;
+              console.log('[api-os][GET list] success', { requestId, page, size, total: count, ms: duration });
+              return new Response(
+                JSON.stringify({
+                  ok: true,
+                  data: {
+                    items: data || [],
+                    pagination: {
+                      page,
+                      size,
+                      total: count,
+                      pages: Math.ceil((count || 0) / size),
+                    },
+                  },
+                }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              );
+            }
+          } catch (err: any) {
+            console.error('[api-os][GET] unhandled_error', { requestId, message: err?.message, stack: err?.stack });
+            return new Response(
+              JSON.stringify({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'Erro interno do servidor' } }),
+              { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+
 
       case 'PUT':
         if (osId) {
