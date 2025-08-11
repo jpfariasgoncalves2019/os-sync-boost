@@ -17,6 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiClient } from "@/lib/api";
+import { supabase } from "@/integrations/supabase/client";
 import { NovaOSForm, Cliente, EquipamentoOS, ServicoOS, ProdutoOS, DespesaOS, OrdemServico, formatCurrency } from "@/lib/types";
 import { formatPhoneNumber, normalizePhoneNumber, validatePhoneE164 } from "@/lib/format";
 import { Phone, User, Wrench, Package, Receipt, FileText, Save, CheckCircle, X } from "lucide-react";
@@ -121,22 +122,40 @@ export default function NovaOSEdicao() {
   // Load tipos e marcas
   useEffect(() => {
     const fetchTipos = async (q = "") => {
-      const res = await fetch(`/api/tipos-equipamentos?q=${encodeURIComponent(q)}`);
-      const json = await res.json();
-      if (!json?.ok) {
+      try {
+        const { data: session } = await supabase.auth.getSession();
+        const token = session?.session?.access_token;
+        const res = await fetch(`/api/tipos-equipamentos?q=${encodeURIComponent(q)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const json = await res.json();
+        if (!json?.ok) {
+          setTipos([]);
+          return;
+        }
+        setTipos(Array.isArray(json.data?.items) ? json.data.items : []);
+      } catch (err) {
         setTipos([]);
-        return;
+        console.error('Erro ao buscar tipos de equipamento:', err);
       }
-      setTipos(Array.isArray(json.data?.items) ? json.data.items : []);
     };
     const fetchMarcas = async (q = "") => {
-      const res = await fetch(`/api/marcas?q=${encodeURIComponent(q)}`);
-      const json = await res.json();
-      if (!json?.ok) {
+      try {
+        const { data: session } = await supabase.auth.getSession();
+        const token = session?.session?.access_token;
+        const res = await fetch(`/api/marcas?q=${encodeURIComponent(q)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const json = await res.json();
+        if (!json?.ok) {
+          setMarcas([]);
+          return;
+        }
+        setMarcas(Array.isArray(json.data?.items) ? json.data.items : []);
+      } catch (err) {
         setMarcas([]);
-        return;
+        console.error('Erro ao buscar marcas:', err);
       }
-      setMarcas(Array.isArray(json.data?.items) ? json.data.items : []);
     };
     fetchTipos();
     fetchMarcas();
@@ -201,8 +220,10 @@ export default function NovaOSEdicao() {
           if (os.equipamento_os) {
             const equipamentoData = {
               id: os.equipamento_os.id,
-              tipo: os.equipamento_os.tipo,
-              marca: os.equipamento_os.marca || "",
+              tipo_id: os.equipamento_os.tipo_id || 0,
+              tipo_nome: os.equipamento_os.tipos_equipamentos?.nome || os.equipamento_os.tipo_nome || "",
+              marca_id: os.equipamento_os.marca_id || undefined,
+              marca_nome: os.equipamento_os.marcas?.nome || os.equipamento_os.marca_nome || "",
               modelo: os.equipamento_os.modelo || "",
               numero_serie: os.equipamento_os.numero_serie || "",
             };

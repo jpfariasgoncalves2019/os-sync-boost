@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { toast } from "@/hooks/use-toast";
 
 import { apiClient } from "@/lib/api";
+// ...existing code...
 import { OrdemServico, OSFilters, STATUS_CONFIG, SYNC_STATUS_CONFIG, formatCurrency, formatDate } from "@/lib/types";
 import { shareViaWhatsApp } from "@/lib/whatsapp-share";
 import { StatusDropdown } from "@/components/StatusDropdown";
@@ -27,16 +28,29 @@ export default function ListaOS() {
   const loadOrders = async () => {
     setLoading(true);
     try {
-      // Garante paginação válida
       const pageNum = Number.isFinite(page) && page > 0 ? page : 1;
       const sizeNum = 20;
-      const response = await apiClient.listOS({
-        ...filters,
-        ...(searchQuery && { query: searchQuery }),
-        page: pageNum,
-        size: sizeNum,
+      const params = new URLSearchParams({
+        page: String(pageNum),
+        size: String(sizeNum),
       });
-
+      if (searchQuery) params.set('query', searchQuery);
+      // Adiciona filtros extras
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.set(key, value);
+      });
+      let response;
+      try {
+        response = await apiClient.get(`/api/os?${params.toString()}`);
+      } catch (error: any) {
+        toast({
+          title: "Erro de conexão",
+          description: error?.message || "Não foi possível carregar as OS. Tente novamente.",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
       if (response.ok && response.data) {
         setOrders(response.data.items);
         setTotalPages(response.data.pagination.pages);
@@ -49,8 +63,8 @@ export default function ListaOS() {
       }
     } catch (error: any) {
       toast({
-        title: "Erro de conexão",
-        description: error?.message || "Não foi possível carregar as OS. Tente novamente.",
+        title: "Erro inesperado",
+        description: error?.message || "Não foi possível carregar as OS.",
         variant: "destructive",
       });
     } finally {
@@ -63,7 +77,6 @@ export default function ListaOS() {
   }, [filters, searchQuery, page]);
 
   const handleSearch = (value: string) => {
-    // Sanitiza: remove espaços à esquerda e força minúsculo
     const term = value.toLowerCase().trimStart();
     setSearchQuery(term);
     setPage(1);

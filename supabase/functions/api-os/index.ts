@@ -44,6 +44,12 @@ serve(async (req) => {
     const pathParts = url.pathname.split('/');
     const osId = pathParts[pathParts.length - 1];
 
+    // Permitir GET sem Authorization, exigir para POST/PUT/DELETE
+    const authHeader = req.headers.get('authorization');
+    if (!authHeader && req.method !== 'GET') {
+      return new Response(JSON.stringify({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } }), { status: 401, headers: { ...ch, 'Content-Type': 'application/json' } });
+    }
+
     switch (req.method) {
       // Criar OS ou sincronizar alterações
       case 'POST':

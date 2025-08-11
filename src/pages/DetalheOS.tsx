@@ -34,19 +34,33 @@ export default function DetalheOS() {
             setOS(response.data as OrdemServico);
           } else {
             setOS(null);
-            toast({
-              title: "OS não encontrada",
-              description: response.error?.message || "Não foi possível carregar os dados da OS",
-              variant: "destructive"
-            });
+            const code = response.error?.code;
+            if (code === 'NOT_FOUND') {
+              toast({
+                title: "OS não encontrada",
+                description: response.error?.message || "Não foi possível carregar os dados da OS",
+                variant: "destructive"
+              });
+            } else if (code === 'UNAUTHORIZED') {
+              toast({
+                title: "Sessão expirada",
+                description: "Faça login novamente para acessar os detalhes da OS.",
+                variant: "destructive"
+              });
+            } else {
+              toast({
+                title: "Erro",
+                description: response.error?.message || "Não foi possível carregar os dados da OS",
+                variant: "destructive"
+              });
+            }
           }
         })
         .catch(error => {
-          console.error('Erro ao carregar OS:', error);
           setOS(null);
           toast({
             title: "Erro",
-            description: "Não foi possível carregar os dados da OS",
+            description: error?.message || "Não foi possível carregar os dados da OS",
             variant: "destructive"
           });
         })
@@ -55,6 +69,39 @@ export default function DetalheOS() {
         });
     }
   }, [id, toast]);
+
+  // Geração de PDF com token Supabase
+  const handleGeneratePDF = async () => {
+    if (!id) return;
+    try {
+      // Obter token Supabase se existir
+      const token = useUserToken();
+      const url = `https://ppxexzbmaepudhkqfozt.supabase.co/functions/v1/api-os/${id}/pdf`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const urlBlob = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = urlBlob;
+        link.setAttribute('download', `os-${id}.pdf`);
+        document.body.appendChild(link);
+        link.click();
+        link.parentNode?.removeChild(link);
+        window.URL.revokeObjectURL(urlBlob);
+      } else if (response.status === 401) {
+        toast({ title: 'Permissão negada', description: 'Você não tem permissão para gerar o PDF.', variant: 'destructive' });
+      } else if (response.status === 500) {
+        toast({ title: 'Erro ao gerar PDF', description: 'Erro interno do servidor.', variant: 'destructive' });
+      } else {
+        toast({ title: 'Erro', description: 'Erro ao gerar PDF.', variant: 'destructive' });
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err?.message || 'Erro ao gerar PDF.', variant: 'destructive' });
+    }
+  };
 
   if (loading) {
     return (
@@ -88,6 +135,11 @@ export default function DetalheOS() {
 
   return (
     <div className="container mx-auto py-6 space-y-6">
+      <div className="flex justify-end mb-4">
+        <Button variant="outline" onClick={handleGeneratePDF}>
+          Gerar PDF
+        </Button>
+      </div>
       {/* DADOS DO CLIENTE E EQUIPAMENTO */}
       <Card>
         <CardHeader>
