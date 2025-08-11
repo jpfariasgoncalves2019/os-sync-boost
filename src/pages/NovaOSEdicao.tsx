@@ -8,7 +8,7 @@ import { ItemList, MoneyInput } from "@/components/ItemList";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { MagnifyingGlass, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -72,8 +72,8 @@ export default function NovaOSEdicao() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(false);
-  const [tipos, setTipos] = useState([]);
-  const [marcas, setMarcas] = useState([]);
+  const [tipos, setTipos] = useState<any[]>([]);
+  const [marcas, setMarcas] = useState<any[]>([]);
   const [modalTipoOpen, setModalTipoOpen] = useState(false);
   const [modalMarcaOpen, setModalMarcaOpen] = useState(false);
   const [novoTipo, setNovoTipo] = useState("");
@@ -89,8 +89,8 @@ export default function NovaOSEdicao() {
   const form = useForm<NovaOSForm>({
     resolver: zodResolver(novaOSSchema),
     defaultValues: {
-      cliente: { nome: "", telefone: "", email: "" },
-      equipamento: { tipo: "", marca: "", modelo: "", numero_serie: "" },
+  cliente: { nome: "", telefone: "", email: "" },
+  equipamento: { tipo_id: 0, tipo_nome: "", marca_id: undefined, marca_nome: "", modelo: "", numero_serie: "" },
       servicos: [],
       produtos: [],
       despesas: [],
@@ -123,12 +123,20 @@ export default function NovaOSEdicao() {
     const fetchTipos = async (q = "") => {
       const res = await fetch(`/api/tipos-equipamentos?q=${encodeURIComponent(q)}`);
       const json = await res.json();
-      if (json.ok) setTipos(json.data.items);
+      if (!json?.ok) {
+        setTipos([]);
+        return;
+      }
+      setTipos(Array.isArray(json.data?.items) ? json.data.items : []);
     };
     const fetchMarcas = async (q = "") => {
       const res = await fetch(`/api/marcas?q=${encodeURIComponent(q)}`);
       const json = await res.json();
-      if (json.ok) setMarcas(json.data.items);
+      if (!json?.ok) {
+        setMarcas([]);
+        return;
+      }
+      setMarcas(Array.isArray(json.data?.items) ? json.data.items : []);
     };
     fetchTipos();
     fetchMarcas();
@@ -492,9 +500,11 @@ export default function NovaOSEdicao() {
       // Montar payload
       const osData = {
         cliente_id: clienteId,
-        equipamento: formData.equipamento.tipo ? {
-          tipo: formData.equipamento.tipo,
-          marca: formData.equipamento.marca || null,
+        equipamento: formData.equipamento.tipo_id ? {
+          tipo_id: formData.equipamento.tipo_id,
+          tipo_nome: formData.equipamento.tipo_nome,
+          marca_id: formData.equipamento.marca_id,
+          marca_nome: formData.equipamento.marca_nome,
           modelo: formData.equipamento.modelo || null,
           numero_serie: formData.equipamento.numero_serie || null,
         } : null,
@@ -788,15 +798,18 @@ export default function NovaOSEdicao() {
                         value={field.value ? String(field.value) : ""}
                         onValueChange={v => field.onChange(Number(v))}
                         onOpenChange={() => setErroNovoTipo("")}
-                        searchValue={undefined}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Selecione o tipo..." />
                         </SelectTrigger>
                         <SelectContent>
-                          {tipos.map((tipo: any) => (
-                            <SelectItem key={tipo.id} value={String(tipo.id)}>{tipo.nome}</SelectItem>
-                          ))}
+                          {tipos.length === 0 ? (
+                            <div className="p-2 text-muted-foreground">Nenhum item encontrado</div>
+                          ) : (
+                            tipos.map((tipo: any) => (
+                              <SelectItem key={tipo.id} value={String(tipo.id)}>{tipo.nome}</SelectItem>
+                            ))
+                          )}
                           <div className="flex items-center gap-1 p-2 cursor-pointer hover:bg-muted" onClick={() => setModalTipoOpen(true)}>
                             <Plus className="w-4 h-4" /> Não encontrou? Adicionar novo...
                           </div>
@@ -820,15 +833,18 @@ export default function NovaOSEdicao() {
                         value={field.value ? String(field.value) : ""}
                         onValueChange={v => field.onChange(Number(v))}
                         onOpenChange={() => setErroNovoMarca("")}
-                        searchValue={undefined}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Selecione a marca..." />
                         </SelectTrigger>
                         <SelectContent>
-                          {marcas.map((marca: any) => (
-                            <SelectItem key={marca.id} value={String(marca.id)}>{marca.nome}</SelectItem>
-                          ))}
+                          {marcas.length === 0 ? (
+                            <div className="p-2 text-muted-foreground">Nenhum item encontrado</div>
+                          ) : (
+                            marcas.map((marca: any) => (
+                              <SelectItem key={marca.id} value={String(marca.id)}>{marca.nome}</SelectItem>
+                            ))
+                          )}
                           <div className="flex items-center gap-1 p-2 cursor-pointer hover:bg-muted" onClick={() => setModalMarcaOpen(true)}>
                             <Plus className="w-4 h-4" /> Não encontrou? Adicionar novo...
                           </div>
