@@ -284,8 +284,10 @@ export default function ListaOS() {
                       <div><strong>Nome:</strong> {order.clientes?.nome || "Cliente não encontrado"}</div>
                       <div><strong>Telefone:</strong> {order.clientes?.telefone || "Não informado"}</div>
                       <div><strong>Equipamento:</strong> {
-                        order.equipamento?.tipo
-                        || (Array.isArray(order.equipamento_os) ? order.equipamento_os[0]?.tipo : order.equipamento_os?.tipo)
+                        order.equipamento_os?.tipos_equipamentos?.nome
+                        || order.equipamento_os?.tipo_nome
+                        || order.equipamento?.tipo_nome
+                        || (Array.isArray(order.equipamento_os) ? order.equipamento_os[0]?.tipos_equipamentos?.nome : undefined)
                         || "Não informado"
                       }</div>
                     </div>

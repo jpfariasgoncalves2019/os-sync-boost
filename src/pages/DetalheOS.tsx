@@ -103,8 +103,8 @@ export default function DetalheOS() {
             </div>
             <div>
               <h3 className="font-semibold mb-1">Equipamento</h3>
-              <div><b>Tipo:</b> {os.equipamento_os?.tipo || os.equipamento?.tipo || '-'}</div>
-              <div><b>Marca:</b> {os.equipamento_os?.marca || os.equipamento?.marca || '-'}</div>
+              <div><b>Tipo:</b> {os.equipamento_os?.tipos_equipamentos?.nome || os.equipamento_os?.tipo_nome || os.equipamento?.tipo_nome || '-'}</div>
+              <div><b>Marca:</b> {os.equipamento_os?.marcas?.nome || os.equipamento_os?.marca_nome || os.equipamento?.marca_nome || '-'}</div>
               <div><b>Modelo:</b> {os.equipamento_os?.modelo || os.equipamento?.modelo || '-'}</div>
               <div><b>Nº Série:</b> {os.equipamento_os?.numero_serie || os.equipamento?.numero_serie || '-'}</div>
             </div>

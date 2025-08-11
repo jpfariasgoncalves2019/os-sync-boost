@@ -8,6 +8,7 @@ import { ItemList, MoneyInput } from "@/components/ItemList";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { MagnifyingGlass, Plus } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -33,8 +34,10 @@ const novaOSSchema = z.object({
     email: z.string().email("Email inválido").optional().or(z.literal("")),
   }),
   equipamento: z.object({
-    tipo: z.string().min(1, "Tipo é obrigatório"),
-    marca: z.string().optional(),
+    tipo_id: z.coerce.number().int().positive({ message: "Tipo é obrigatório" }),
+    tipo_nome: z.string().optional(),
+    marca_id: z.coerce.number().int().optional(),
+    marca_nome: z.string().optional(),
     modelo: z.string().optional(),
     numero_serie: z.string().optional(),
   }),
@@ -69,6 +72,14 @@ export default function NovaOSEdicao() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(false);
+  const [tipos, setTipos] = useState([]);
+  const [marcas, setMarcas] = useState([]);
+  const [modalTipoOpen, setModalTipoOpen] = useState(false);
+  const [modalMarcaOpen, setModalMarcaOpen] = useState(false);
+  const [novoTipo, setNovoTipo] = useState("");
+  const [novoMarca, setNovoMarca] = useState("");
+  const [erroNovoTipo, setErroNovoTipo] = useState("");
+  const [erroNovoMarca, setErroNovoMarca] = useState("");
   const [saving, setSaving] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
 
@@ -107,6 +118,22 @@ export default function NovaOSEdicao() {
     loadClientes();
   }, []);
 
+  // Load tipos e marcas
+  useEffect(() => {
+    const fetchTipos = async (q = "") => {
+      const res = await fetch(`/api/tipos-equipamentos?q=${encodeURIComponent(q)}`);
+      const json = await res.json();
+      if (json.ok) setTipos(json.data.items);
+    };
+    const fetchMarcas = async (q = "") => {
+      const res = await fetch(`/api/marcas?q=${encodeURIComponent(q)}`);
+      const json = await res.json();
+      if (json.ok) setMarcas(json.data.items);
+    };
+    fetchTipos();
+    fetchMarcas();
+  }, []);
+
   // Load OS data for editing or duplicating
   useEffect(() => {
     const loadOS = async () => {
@@ -121,7 +148,7 @@ export default function NovaOSEdicao() {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });
-        setValue("equipamento", os.equipamento || { tipo: "", marca: "", modelo: "", numero_serie: "" });
+  setValue("equipamento", os.equipamento || { tipo_id: 0, marca_id: undefined, modelo: "", numero_serie: "" });
         setValue("servicos", os.servicos || []);
         setValue("produtos", os.produtos || []);
         setValue("despesas", os.despesas || []);
@@ -741,7 +768,7 @@ export default function NovaOSEdicao() {
           totalSteps={6}
           onNext={handleNext}
           onPrevious={handlePrevious}
-          isNextDisabled={!watchedData.equipamento.tipo}
+          isNextDisabled={!watchedData.equipamento.tipo_id}
           showPrevious={true}
         >
           <div className="space-y-4">
@@ -749,33 +776,68 @@ export default function NovaOSEdicao() {
               <Wrench className="w-5 h-5 text-primary" />
               <h3 className="text-lg font-medium">Dados do Equipamento</h3>
             </div>
-
             <div className="grid gap-4 md:grid-cols-2">
               <Controller
-                name="equipamento.tipo"
+                name="equipamento.tipo_id"
                 control={control}
                 render={({ field }) => (
                   <div className="space-y-2">
                     <Label>Tipo *</Label>
-                    <Input {...field} placeholder="Ex: Roçadeira, Motosserra, Lavajato" />
-                    {errors.equipamento?.tipo && (
-                      <p className="text-sm text-destructive">{errors.equipamento.tipo.message}</p>
+                    <div className="flex gap-2 items-center">
+                      <Select
+                        value={field.value ? String(field.value) : ""}
+                        onValueChange={v => field.onChange(Number(v))}
+                        onOpenChange={() => setErroNovoTipo("")}
+                        searchValue={undefined}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione o tipo..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {tipos.map((tipo: any) => (
+                            <SelectItem key={tipo.id} value={String(tipo.id)}>{tipo.nome}</SelectItem>
+                          ))}
+                          <div className="flex items-center gap-1 p-2 cursor-pointer hover:bg-muted" onClick={() => setModalTipoOpen(true)}>
+                            <Plus className="w-4 h-4" /> Não encontrou? Adicionar novo...
+                          </div>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {errors.equipamento?.tipo_id && (
+                      <p className="text-sm text-destructive">{errors.equipamento.tipo_id.message}</p>
                     )}
                   </div>
                 )}
               />
-
               <Controller
-                name="equipamento.marca"
+                name="equipamento.marca_id"
                 control={control}
                 render={({ field }) => (
                   <div className="space-y-2">
                     <Label>Marca</Label>
-                    <Input {...field} placeholder="Ex: Stihl, Husqvarna, Toyama" />
+                    <div className="flex gap-2 items-center">
+                      <Select
+                        value={field.value ? String(field.value) : ""}
+                        onValueChange={v => field.onChange(Number(v))}
+                        onOpenChange={() => setErroNovoMarca("")}
+                        searchValue={undefined}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione a marca..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {marcas.map((marca: any) => (
+                            <SelectItem key={marca.id} value={String(marca.id)}>{marca.nome}</SelectItem>
+                          ))}
+                          <div className="flex items-center gap-1 p-2 cursor-pointer hover:bg-muted" onClick={() => setModalMarcaOpen(true)}>
+                            <Plus className="w-4 h-4" /> Não encontrou? Adicionar novo...
+                          </div>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 )}
               />
-
               <Controller
                 name="equipamento.modelo"
                 control={control}
@@ -786,7 +848,6 @@ export default function NovaOSEdicao() {
                   </div>
                 )}
               />
-
               <Controller
                 name="equipamento.numero_serie"
                 control={control}
@@ -798,6 +859,76 @@ export default function NovaOSEdicao() {
                 )}
               />
             </div>
+
+            {/* Modal Novo Tipo */}
+            <Dialog open={modalTipoOpen} onOpenChange={setModalTipoOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Adicionar Novo Tipo</DialogTitle>
+                </DialogHeader>
+                <Input value={novoTipo} onChange={e => setNovoTipo(e.target.value)} placeholder="Nome do novo tipo" />
+                {erroNovoTipo && <p className="text-sm text-destructive">{erroNovoTipo}</p>}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setModalTipoOpen(false)}>Cancelar</Button>
+                  <Button onClick={async () => {
+                    setErroNovoTipo("");
+                    if (!novoTipo.trim()) {
+                      setErroNovoTipo("Nome obrigatório");
+                      return;
+                    }
+                    const res = await fetch("/api/tipos-equipamentos", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ nome: novoTipo })
+                    });
+                    const json = await res.json();
+                    if (json.ok) {
+                      setModalTipoOpen(false);
+                      setNovoTipo("");
+                      setTipos((prev) => [...prev, json.data]);
+                      setValue("equipamento.tipo_id", json.data.id);
+                    } else {
+                      setErroNovoTipo(json.error?.message || "Erro ao adicionar tipo");
+                    }
+                  }}>Salvar</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Modal Nova Marca */}
+            <Dialog open={modalMarcaOpen} onOpenChange={setModalMarcaOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Adicionar Nova Marca</DialogTitle>
+                </DialogHeader>
+                <Input value={novoMarca} onChange={e => setNovoMarca(e.target.value)} placeholder="Nome da nova marca" />
+                {erroNovoMarca && <p className="text-sm text-destructive">{erroNovoMarca}</p>}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setModalMarcaOpen(false)}>Cancelar</Button>
+                  <Button onClick={async () => {
+                    setErroNovoMarca("");
+                    if (!novoMarca.trim()) {
+                      setErroNovoMarca("Nome obrigatório");
+                      return;
+                    }
+                    const res = await fetch("/api/marcas", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ nome: novoMarca })
+                    });
+                    const json = await res.json();
+                    if (json.ok) {
+                      setModalMarcaOpen(false);
+                      setNovoMarca("");
+                      setMarcas((prev) => [...prev, json.data]);
+                      setValue("equipamento.marca_id", json.data.id);
+                    } else {
+                      setErroNovoMarca(json.error?.message || "Erro ao adicionar marca");
+                    }
+                  }}>Salvar</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </WizardStep>
       )}

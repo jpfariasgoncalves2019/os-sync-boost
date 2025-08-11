@@ -97,7 +97,15 @@ serve(async (req) => {
 
           // Relacionamentos
           if (data.equipamento) {
-            await supabase.from('equipamento_os').insert([{ ...data.equipamento, ordem_servico_id: osData.id }]);
+            // Garante que tipo_id e marca_id são enviados
+            const equipamentoPayload: any = {
+              ordem_servico_id: osData.id,
+              tipo_id: data.equipamento.tipo_id,
+              marca_id: data.equipamento.marca_id || null,
+              modelo: data.equipamento.modelo || null,
+              numero_serie: data.equipamento.numero_serie || null
+            };
+            await supabase.from('equipamento_os').insert([equipamentoPayload]);
           }
           if (data.servicos?.length > 0) {
             await supabase.from('servicos_os').insert(data.servicos.map((s: any) => ({ ...s, ordem_servico_id: osData.id })));
@@ -121,7 +129,7 @@ serve(async (req) => {
             .select(`
               *,
               clientes(*),
-              equipamento_os(*),
+              equipamento_os(*, tipos_equipamentos(nome), marcas(nome)),
               servicos_os(*),
               produtos_os(*),
               despesas_os(*),
@@ -163,7 +171,7 @@ serve(async (req) => {
             .select(`
               *,
               clientes(nome, telefone, email),
-              equipamento_os(*),
+              equipamento_os(*, tipos_equipamentos(nome), marcas(nome)),
               servicos_os(nome_servico),
               produtos_os(nome_produto)
             `, { count: 'exact' })
