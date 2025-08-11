@@ -1,13 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.53.0';
 import { z } from 'https://esm.sh/zod@3.23.8';
-import { corsHeaders, handleCors } from './cors.ts';
+import { buildCorsHeaders, handleOptions } from '../_shared/cors.ts';
 
-// Inicializa cliente do Supabase
-const supabaseUrl = Deno.env.get('SB_URL')!;
-const serviceKey = Deno.env.get('SB_SERVICE_ROLE_KEY')!;
-console.log("[DEBUG] SB_URL:", supabaseUrl || "NÃO DEFINIDA");
-console.log("[DEBUG] SERVICE_ROLE:", serviceKey ? "definida" : "NÃO DEFINIDA");
+const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = createClient(supabaseUrl, serviceKey);
 
 // Gera número único para OS
@@ -38,11 +35,9 @@ function validateOS(data: any) {
 
 serve(async (req) => {
 
-  // CORS
-  const origin = req.headers.get("origin");
-  const ch = corsHeaders(origin);
-  const corsPreflight = handleCors(req);
-  if (corsPreflight) return corsPreflight;
+  if (req.method === 'OPTIONS') return handleOptions(req);
+  const origin = req.headers.get('Origin') || undefined;
+  const ch = buildCorsHeaders(origin);
 
   try {
     const url = new URL(req.url);
@@ -256,10 +251,8 @@ serve(async (req) => {
           status: 405, headers: { ...ch, 'Content-Type': 'application/json' }
         });
     }
-  } catch (error: any) {
-    console.error('Error in OS API:', error);
-    return new Response(JSON.stringify({ ok: false, error: { code: "INTERNAL_ERROR", message: "Erro interno do servidor" } }), {
-  status: 500, headers: { ...ch, 'Content-Type': 'application/json' }
-    });
+  } catch (err) {
+    const payload = { ok: false, message: (err as Error).message ?? "Erro interno", stack: (err as Error).stack ?? null };
+    return new Response(JSON.stringify(payload), { status: 500, headers: { ...ch, 'Content-Type': 'application/json' } });
   }
 });

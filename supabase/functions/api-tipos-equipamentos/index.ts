@@ -1,31 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.53.0';
 import { z } from 'https://esm.sh/zod@3.23.8';
+import { buildCorsHeaders, handleOptions } from '../_shared/cors.ts';
 
-const supabaseUrl = Deno.env.get('SB_URL')!;
-const serviceKey = Deno.env.get('SB_SERVICE_ROLE_KEY')!;
+const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = createClient(supabaseUrl, serviceKey);
 
-function corsHeaders(origin: string | null) {
-  return {
-    "Access-Control-Allow-Origin": origin || "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  };
-}
-
-function handleCors(req: Request) {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders(req.headers.get("origin")) });
-  }
-}
-
 serve(async (req) => {
-  const origin = req.headers.get("origin");
-  const ch = corsHeaders(origin);
-  const corsPreflight = handleCors(req);
-  if (corsPreflight) return corsPreflight;
-
+  if (req.method === 'OPTIONS') return handleOptions(req);
+  const origin = req.headers.get('Origin') || undefined;
+  const ch = buildCorsHeaders(origin);
   try {
     const url = new URL(req.url);
     switch (req.method) {
@@ -71,9 +56,8 @@ serve(async (req) => {
           status: 405, headers: { ...ch, 'Content-Type': 'application/json' }
         });
     }
-  } catch (error) {
-    return new Response(JSON.stringify({ ok: false, error: { code: "INTERNAL_ERROR", message: "Erro interno do servidor" } }), {
-      status: 500, headers: { ...ch, 'Content-Type': 'application/json' }
-    });
+  } catch (err) {
+    const payload = { ok: false, message: (err as Error).message ?? "Erro interno", stack: (err as Error).stack ?? null };
+    return new Response(JSON.stringify(payload), { status: 500, headers: { ...ch, 'Content-Type': 'application/json' } });
   }
 });
