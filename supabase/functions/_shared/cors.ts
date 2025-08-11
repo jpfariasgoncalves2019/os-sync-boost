@@ -2,6 +2,7 @@
 export const allowedOrigins = new Set<string>([
   "https://progestao.netlify.app",
   "http://localhost:8080",
+  "http://localhost:8843",
   "https://preview--os-sync-boost.lovable.app", // opcional
 ]);
 
