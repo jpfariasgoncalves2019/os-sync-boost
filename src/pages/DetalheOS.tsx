@@ -28,39 +28,15 @@ export default function DetalheOS() {
   useEffect(() => {
     if (id) {
       setLoading(true);
-      apiClient.getOS(id)
+      apiClient.get(`/os/${id}`)
         .then(response => {
-          if (response.ok && response.data) {
-            setOS(response.data as OrdemServico);
-          } else {
-            setOS(null);
-            const code = response.error?.code;
-            if (code === 'NOT_FOUND') {
-              toast({
-                title: "OS não encontrada",
-                description: response.error?.message || "Não foi possível carregar os dados da OS",
-                variant: "destructive"
-              });
-            } else if (code === 'UNAUTHORIZED') {
-              toast({
-                title: "Sessão expirada",
-                description: "Faça login novamente para acessar os detalhes da OS.",
-                variant: "destructive"
-              });
-            } else {
-              toast({
-                title: "Erro",
-                description: response.error?.message || "Não foi possível carregar os dados da OS",
-                variant: "destructive"
-              });
-            }
-          }
+          setOS(response.data as OrdemServico);
         })
         .catch(error => {
-          setOS(null);
+          console.error('Erro ao carregar OS:', error);
           toast({
             title: "Erro",
-            description: error?.message || "Não foi possível carregar os dados da OS",
+            description: "Não foi possível carregar os dados da OS",
             variant: "destructive"
           });
         })
@@ -69,39 +45,6 @@ export default function DetalheOS() {
         });
     }
   }, [id, toast]);
-
-  // Geração de PDF com token Supabase
-  const handleGeneratePDF = async () => {
-    if (!id) return;
-    try {
-      // Obter token Supabase se existir
-      const token = useUserToken();
-      const url = `https://ppxexzbmaepudhkqfozt.supabase.co/functions/v1/api-os/${id}/pdf`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (response.ok) {
-        const blob = await response.blob();
-        const urlBlob = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = urlBlob;
-        link.setAttribute('download', `os-${id}.pdf`);
-        document.body.appendChild(link);
-        link.click();
-        link.parentNode?.removeChild(link);
-        window.URL.revokeObjectURL(urlBlob);
-      } else if (response.status === 401) {
-        toast({ title: 'Permissão negada', description: 'Você não tem permissão para gerar o PDF.', variant: 'destructive' });
-      } else if (response.status === 500) {
-        toast({ title: 'Erro ao gerar PDF', description: 'Erro interno do servidor.', variant: 'destructive' });
-      } else {
-        toast({ title: 'Erro', description: 'Erro ao gerar PDF.', variant: 'destructive' });
-      }
-    } catch (err: any) {
-      toast({ title: 'Erro', description: err?.message || 'Erro ao gerar PDF.', variant: 'destructive' });
-    }
-  };
 
   if (loading) {
     return (
@@ -135,74 +78,7 @@ export default function DetalheOS() {
 
   return (
     <div className="container mx-auto py-6 space-y-6">
-      <div className="flex justify-end mb-4">
-        <Button variant="outline" onClick={handleGeneratePDF}>
-          Gerar PDF
-        </Button>
-      </div>
-      {/* DADOS DO CLIENTE E EQUIPAMENTO */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Dados do Cliente e Equipamento</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <h3 className="font-semibold mb-1">Cliente</h3>
-              <div><b>Nome:</b> {os.clientes?.nome || os.cliente_nome || '-'}</div>
-              <div><b>Telefone:</b> {os.clientes?.telefone || os.cliente_telefone || '-'}</div>
-              <div><b>Email:</b> {os.clientes?.email || os.cliente_email || '-'}</div>
-            </div>
-            <div>
-              <h3 className="font-semibold mb-1">Equipamento</h3>
-              <div><b>Tipo:</b> {os.equipamento_os?.tipos_equipamentos?.nome || os.equipamento_os?.tipo_nome || os.equipamento?.tipo_nome || '-'}</div>
-              <div><b>Marca:</b> {os.equipamento_os?.marcas?.nome || os.equipamento_os?.marca_nome || os.equipamento?.marca_nome || '-'}</div>
-              <div><b>Modelo:</b> {os.equipamento_os?.modelo || os.equipamento?.modelo || '-'}</div>
-              <div><b>Nº Série:</b> {os.equipamento_os?.numero_serie || os.equipamento?.numero_serie || '-'}</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* SERVIÇOS */}
-      {os.servicos_os && os.servicos_os.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Package className="w-5 h-5" />
-              Serviços
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Serviço</TableHead>
-                  <TableHead className="text-center">Qtde</TableHead>
-                  <TableHead className="text-right">V. Unit.</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {os.servicos_os.map((servico, index) => (
-                  <TableRow key={index}>
-                    <TableCell>{servico.nome_servico}</TableCell>
-                    <TableCell className="text-center">{servico.quantidade}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(servico.valor_unitario)}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(servico.valor_total)}</TableCell>
-                  </TableRow>
-                ))}
-                <TableRow>
-                  <TableCell colSpan={3} className="font-medium">Subtotal Serviços</TableCell>
-                  <TableCell className="text-right font-medium">{formatCurrency(os.total_servicos || subtotalServicos)}</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* PRODUTOS */}
+      {/* Produtos */}
       {os.produtos_os && os.produtos_os.length > 0 && (
         <Card>
           <CardHeader>
@@ -226,13 +102,13 @@ export default function DetalheOS() {
                   <TableRow key={index}>
                     <TableCell>{produto.nome_produto}</TableCell>
                     <TableCell className="text-center">{produto.quantidade}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(produto.valor_unitario ?? produto.preco_unitario)}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(produto.valor_total ?? produto.total)}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(produto.valor_unitario)}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(produto.valor_total)}</TableCell>
                   </TableRow>
                 ))}
                 <TableRow>
                   <TableCell colSpan={3} className="font-medium">Subtotal Produtos</TableCell>
-                  <TableCell className="text-right font-medium">{formatCurrency(os.total_produtos || subtotalProdutos)}</TableCell>
+                  <TableCell className="text-right font-medium">{formatCurrency(os.total_produtos || 0)}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -240,7 +116,7 @@ export default function DetalheOS() {
         </Card>
       )}
 
-      {/* DESPESAS */}
+      {/* Despesas */}
       {os.despesas_os && os.despesas_os.length > 0 && (
         <Card>
           <CardHeader>
@@ -266,7 +142,7 @@ export default function DetalheOS() {
                 ))}
                 <TableRow>
                   <TableCell className="font-medium">Subtotal Despesas</TableCell>
-                  <TableCell className="text-right font-medium">{formatCurrency(os.total_despesas || subtotalDespesas)}</TableCell>
+                  <TableCell className="text-right font-medium">{formatCurrency(os.total_despesas || 0)}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -282,20 +158,20 @@ export default function DetalheOS() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-primary">
-              {formatCurrency(os.total_geral || totalGeral)}
+              {formatCurrency(os.total_geral || 0)}
             </div>
             <div className="mt-4 space-y-2 text-sm">
               <div className="flex justify-between">
                 <span>Serviços:</span>
-                <span>{formatCurrency(os.total_servicos || subtotalServicos)}</span>
+                <span>{formatCurrency(os.total_servicos || 0)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Produtos:</span>
-                <span>{formatCurrency(os.total_produtos || subtotalProdutos)}</span>
+                <span>{formatCurrency(os.total_produtos || 0)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Despesas:</span>
-                <span>{formatCurrency(os.total_despesas || subtotalDespesas)}</span>
+                <span>{formatCurrency(os.total_despesas || 0)}</span>
               </div>
             </div>
           </CardContent>
@@ -306,10 +182,6 @@ export default function DetalheOS() {
             <CardTitle>Condições</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div>
-              <p className="text-sm font-medium">Status</p>
-              <p className="text-sm text-muted-foreground">{STATUS_CONFIG[os.status]?.label || os.status}</p>
-            </div>
             {os.forma_pagamento && (
               <div>
                 <p className="text-sm font-medium">Forma de Pagamento</p>

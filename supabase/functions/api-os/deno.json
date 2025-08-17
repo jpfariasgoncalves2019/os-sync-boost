@@ -1,4 +1,0 @@
-{
-  "tasks": { "start": "deno run -A --watch supabase/functions/api-os/index.ts" },
-  "compilerOptions": { "lib": ["dom", "esnext"] }
-}

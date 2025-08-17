@@ -1,13 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.53.0';
-import { z } from 'https://esm.sh/zod@3.23.8';
-import { buildCorsHeaders, handleOptions } from '../_shared/cors.ts';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, idempotency-key',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+};
+
+// Initialize Supabase client
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const supabase = createClient(supabaseUrl, serviceKey);
+const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Gera número único para OS
+// Helper function to generate OS number
 function generateOSNumber(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -17,67 +22,90 @@ function generateOSNumber(): string {
   return `OS-${year}${month}-${formattedNumber}`;
 }
 
-// Valida payload da OS
+// Helper function to validate OS data
 function validateOS(data: any) {
   const errors = [];
+  
   if (!data.cliente_id) errors.push("Cliente é obrigatório");
-  if (!data.data) errors.push("Data é obrigatória");
+  if (!data.data) errors.push("Data é obrigatório");
   if (!data.forma_pagamento) errors.push("Forma de pagamento é obrigatória");
-
+  
+  // Must have at least one service or product
   const hasServices = data.servicos && data.servicos.length > 0;
   const hasProducts = data.produtos && data.produtos.length > 0;
   if (!hasServices && !hasProducts) {
     errors.push("Deve ter pelo menos um serviço ou produto");
   }
+  
   if (data.total_geral < 0) errors.push("Total geral deve ser >= 0");
+  
   return errors;
 }
 
 serve(async (req) => {
-
-  if (req.method === 'OPTIONS') return handleOptions(req);
-  const origin = req.headers.get('Origin') || undefined;
-  const ch = buildCorsHeaders(origin);
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
 
   try {
     const url = new URL(req.url);
     const pathParts = url.pathname.split('/');
     const osId = pathParts[pathParts.length - 1];
 
-    // Permitir GET sem Authorization, exigir para POST/PUT/DELETE
-    const authHeader = req.headers.get('authorization');
-    if (!authHeader && req.method !== 'GET') {
-      return new Response(JSON.stringify({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } }), { status: 401, headers: { ...ch, 'Content-Type': 'application/json' } });
-    }
-
     switch (req.method) {
-      // Criar OS ou sincronizar alterações
       case 'POST':
         if (url.pathname.endsWith('/sync')) {
-          const { changes } = await req.json();
-          const applied: string[] = [];
-          const conflicts: any[] = [];
-
+          // Handle sync endpoint
+          const { usuario_id, changes } = await req.json();
+          const applied = [];
+          const conflicts = [];
+          
           for (const change of changes) {
-            const { error } = await supabase.from('ordens_servico').upsert(change).eq('id', change.id);
-            if (error) conflicts.push({ id: change.id, error: error.message });
-            else applied.push(change.id);
+            try {
+              // Simple conflict resolution: last write wins
+              await supabase
+                .from('ordens_servico')
+                .upsert(change)
+                .eq('id', change.id);
+              applied.push(change.id);
+            } catch (error) {
+              conflicts.push({ id: change.id, error: error.message });
+            }
           }
-
-          return new Response(JSON.stringify({ ok: true, data: { applied, conflicts } }), {
-            headers: { ...ch, 'Content-Type': 'application/json' }
-          });
+          
+          return new Response(
+            JSON.stringify({ ok: true, data: { applied, conflicts } }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
         } else {
+          // Create new OS
           const data = await req.json();
+          console.log("[api-os] Payload recebido:", JSON.stringify(data, null, 2));
           const validationErrors = validateOS(data);
           if (validationErrors.length > 0) {
-            return new Response(JSON.stringify({
-              ok: false,
-              error: { code: "VALIDATION_ERROR", message: "Dados inválidos", details: validationErrors }
-            }), { status: 400, headers: { ...ch, 'Content-Type': 'application/json' } });
+            console.log("[api-os] Erros de validação:", validationErrors);
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                error: {
+                  code: "VALIDATION_ERROR",
+                  message: "Dados inválidos",
+                  details: validationErrors
+                }
+              }),
+              {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+              }
+            );
           }
 
-          const osNumero = generateOSNumber();
+          try {
+            // Generate OS number
+            const osNumero = generateOSNumber();
+          // Insert OS
+          // Criar payload apenas com campos que existem na tabela ordens_servico
           const osPayload = {
             cliente_id: data.cliente_id,
             forma_pagamento: data.forma_pagamento,
@@ -93,44 +121,99 @@ serve(async (req) => {
             sync_status: 'synced'
           };
 
-          const { data: osData, error: osError } = await supabase.from('ordens_servico').insert([osPayload]).select().single();
-          if (osError) throw osError;
+          const { data: osData, error: osError } = await supabase
+            .from('ordens_servico')
+            .insert([osPayload])
+            .select()
+            .single();
 
-          // Relacionamentos
-          if (data.equipamento) {
-            // Garante que tipo_id e marca_id são enviados
-            const equipamentoPayload: any = {
-              ordem_servico_id: osData.id,
-              tipo_id: data.equipamento.tipo_id,
-              marca_id: data.equipamento.marca_id || null,
-              modelo: data.equipamento.modelo || null,
-              numero_serie: data.equipamento.numero_serie || null
-            };
-            await supabase.from('equipamento_os').insert([equipamentoPayload]);
-          }
-          if (data.servicos?.length > 0) {
-            await supabase.from('servicos_os').insert(data.servicos.map((s: any) => ({ ...s, ordem_servico_id: osData.id })));
-          }
-          if (data.produtos?.length > 0) {
-            await supabase.from('produtos_os').insert(data.produtos.map((p: any) => ({ ...p, ordem_servico_id: osData.id })));
-          }
-          if (data.despesas?.length > 0) {
-            await supabase.from('despesas_os').insert(data.despesas.map((d: any) => ({ ...d, ordem_servico_id: osData.id })));
-          }
+            if (osError) {
+              if (osError.code === '23505') { // Unique constraint violation
+                return new Response(
+                  JSON.stringify({
+                    ok: false,
+                    error: {
+                      code: "DUPLICATE_NUMBER",
+                      message: "Número da OS já existe"
+                    }
+                  }),
+                  {
+                    status: 409,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                  }
+                );
+              }
+              console.log("[api-os] Erro ao inserir OS:", osError, data);
+              throw osError;
+            }
 
-          return new Response(JSON.stringify({ ok: true, data: osData }), {
-            headers: { ...ch, 'Content-Type': 'application/json' }
-          });
+            // Insert related data
+            if (data.equipamento) {
+              await supabase.from('equipamento_os').insert([{
+                ...data.equipamento,
+                ordem_servico_id: osData.id
+              }]);
+            }
+
+            if (data.servicos?.length > 0) {
+              await supabase.from('servicos_os').insert(
+                data.servicos.map((s: any) => ({
+                  ...s,
+                  ordem_servico_id: osData.id
+                }))
+              );
+            }
+
+            if (data.produtos?.length > 0) {
+              await supabase.from('produtos_os').insert(
+                data.produtos.map((p: any) => ({
+                  ...p,
+                  ordem_servico_id: osData.id
+                }))
+              );
+            }
+
+            if (data.despesas?.length > 0) {
+              await supabase.from('despesas_os').insert(
+                data.despesas.map((d: any) => ({
+                  ...d,
+                  ordem_servico_id: osData.id
+                }))
+              );
+            }
+
+            return new Response(
+              JSON.stringify({ ok: true, data: osData }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          } catch (e) {
+            console.log("[api-os] Erro inesperado ao salvar OS:", e, data);
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                error: {
+                  code: "INTERNAL_ERROR",
+                  message: e.message,
+                  stack: e.stack
+                }
+              }),
+              {
+                status: 500,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+              }
+            );
+          }
         }
 
-      // Listar ou buscar OS
       case 'GET':
         if (osId && osId !== 'api-os') {
-          const { data, error } = await supabase.from('ordens_servico')
+          // Get single OS
+          const { data, error } = await supabase
+            .from('ordens_servico')
             .select(`
               *,
               clientes(*),
-              equipamento_os(*, tipos_equipamentos(nome), marcas(nome)),
+              equipamento_os(*),
               servicos_os(*),
               produtos_os(*),
               despesas_os(*),
@@ -141,124 +224,171 @@ serve(async (req) => {
             .single();
 
           if (error) {
-            return new Response(JSON.stringify({ ok: false, error: { code: 'NOT_FOUND', message: 'OS não encontrada' } }), {
-              status: 404, headers: { ...ch, 'Content-Type': 'application/json' }
-            });
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                error: { code: "NOT_FOUND", message: "OS não encontrada" }
+              }),
+              {
+                status: 404,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+              }
+            );
           }
-          return new Response(JSON.stringify({ ok: true, data }), { headers: { ...ch, 'Content-Type': 'application/json' } });
+
+          return new Response(
+            JSON.stringify({ ok: true, data }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
         } else {
-          const params = Object.fromEntries(url.searchParams.entries());
-          const schema = z.object({
-            query: z.string().max(100).optional().transform(v => (v && v.length ? v : undefined)),
-            page: z.coerce.number().int().positive().default(1),
-            size: z.coerce.number().int().min(1).max(100).default(20),
-            status: z.enum(['rascunho','aberta','em_andamento','concluida','cancelada']).optional(),
-            date_from: z.string().optional(),
-            date_to: z.string().optional(),
-          });
+          // List OS with filters
+          const status = url.searchParams.get('status');
+          const dateFrom = url.searchParams.get('date_from');
+          const dateTo = url.searchParams.get('date_to');
+          const query = url.searchParams.get('query');
+          const page = parseInt(url.searchParams.get('page') || '1');
+          const size = parseInt(url.searchParams.get('size') || '20');
 
-          const parsed = schema.safeParse(params);
-          if (!parsed.success) {
-            return new Response(JSON.stringify({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Parâmetros inválidos', details: parsed.error.issues } }), {
-              status: 400, headers: { ...ch, 'Content-Type': 'application/json' }
-            });
-          }
-
-          const { query, page, size, status, date_from, date_to } = parsed.data;
-          const from = (page - 1) * size;
-          const to = page * size - 1;
-
-          let listQuery = supabase.from('ordens_servico')
+          let queryBuilder = supabase
+            .from('ordens_servico')
             .select(`
               *,
-              clientes(nome, telefone, email),
-              equipamento_os(*, tipos_equipamentos(nome), marcas(nome)),
+              clientes(nome, telefone),
               servicos_os(nome_servico),
               produtos_os(nome_produto)
             `, { count: 'exact' })
             .is('deleted_at', null)
             .order('created_at', { ascending: false });
 
-          if (status) listQuery = listQuery.eq('status', status);
-          if (date_from) listQuery = listQuery.gte('data', date_from);
-          if (date_to) listQuery = listQuery.lte('data', date_to);
-
-          if (query) {
-            const q = query.replace(/[\n\r\t]/g, ' ').slice(0, 100);
-            const [clientIdsRes, osIdsServRes, osIdsProdRes, osIdsNumberRes] = await Promise.all([
-              supabase.from('clientes').select('id').ilike('nome', `%${q}%`),
-              supabase.from('servicos_os').select('ordem_servico_id').ilike('nome_servico', `%${q}%`),
-              supabase.from('produtos_os').select('ordem_servico_id').ilike('nome_produto', `%${q}%`),
-              supabase.from('ordens_servico').select('id').ilike('os_numero_humano', `%${q}%`),
-            ]);
-
-            const clientIds = (clientIdsRes.data || []).map(r => r.id);
-            const osIdsFromServ = (osIdsServRes.data || []).map(r => r.ordem_servico_id);
-            const osIdsFromProd = (osIdsProdRes.data || []).map(r => r.ordem_servico_id);
-            let unionIds = new Set<string>([...osIdsFromServ, ...osIdsFromProd, ...((osIdsNumberRes.data || []).map(r => r.id))]);
-
-            if (clientIds.length) {
-              const osByClients = await supabase.from('ordens_servico').select('id').in('cliente_id', clientIds);
-              (osByClients.data || []).forEach(r => unionIds.add(r.id));
-            }
-
-            const ids = Array.from(unionIds);
-            if (ids.length === 0) {
-              return new Response(JSON.stringify({ ok: true, data: { items: [], pagination: { page, size, total: 0, pages: 0 } } }), {
-                headers: { ...ch, 'Content-Type': 'application/json' }
-              });
-            }
-
-            listQuery = listQuery.in('id', ids);
+          if (status) {
+            queryBuilder = queryBuilder.eq('status', status);
           }
 
-          const { data, error, count } = await listQuery.range(from, to);
+          if (dateFrom) {
+            queryBuilder = queryBuilder.gte('data', dateFrom);
+          }
+
+          if (dateTo) {
+            queryBuilder = queryBuilder.lte('data', dateTo);
+          }
+
+          if (query) {
+            queryBuilder = queryBuilder.or(
+              `os_numero_humano.ilike.%${query}%,clientes.nome.ilike.%${query}%,servicos_os.nome_servico.ilike.%${query}%,produtos_os.nome_produto.ilike.%${query}%`
+            );
+          }
+
+          const { data, error, count } = await queryBuilder
+            .range((page - 1) * size, page * size - 1);
+
           if (error) throw error;
 
-          return new Response(JSON.stringify({
-            ok: true,
-            data: {
-              items: data || [],
-              pagination: { page, size, total: count, pages: Math.ceil((count || 0) / size) }
-            }
-          }), { headers: { ...ch, 'Content-Type': 'application/json' } });
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              data: {
+                items: data,
+                pagination: {
+                  page,
+                  size,
+                  total: count,
+                  pages: Math.ceil((count || 0) / size)
+                }
+              }
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
         }
 
-      // Atualizar OS
       case 'PUT':
         if (osId) {
           const data = await req.json();
-          const updatePayload: any = { sync_status: 'synced' };
-          Object.assign(updatePayload, data);
+          console.log("[api-os] PUT payload recebido:", JSON.stringify(data, null, 2));
+          
+          // Para atualizações parciais (como apenas status), não validar campos obrigatórios
+          // Criar payload apenas com campos enviados que existem na tabela
+          const updatePayload: any = {};
+          
+          // Mapear apenas os campos enviados
+          if (data.cliente_id !== undefined) updatePayload.cliente_id = data.cliente_id;
+          if (data.forma_pagamento !== undefined) updatePayload.forma_pagamento = data.forma_pagamento;
+          if (data.garantia !== undefined) updatePayload.garantia = data.garantia;
+          if (data.observacoes !== undefined) updatePayload.observacoes = data.observacoes;
+          if (data.data !== undefined) updatePayload.data = data.data;
+          if (data.status !== undefined) updatePayload.status = data.status;
+          if (data.total_servicos !== undefined) updatePayload.total_servicos = data.total_servicos;
+          if (data.total_produtos !== undefined) updatePayload.total_produtos = data.total_produtos;
+          if (data.total_despesas !== undefined) updatePayload.total_despesas = data.total_despesas;
+          if (data.total_geral !== undefined) updatePayload.total_geral = data.total_geral;
+          
+          // Sempre atualizar o sync_status
+          updatePayload.sync_status = 'synced';
 
-          const { data: osData, error } = await supabase.from('ordens_servico').update(updatePayload).eq('id', osId).select().single();
-          if (error) throw error;
+          console.log("[api-os] Update payload:", JSON.stringify(updatePayload, null, 2));
 
-          return new Response(JSON.stringify({ ok: true, data: osData }), {
-            headers: { ...ch, 'Content-Type': 'application/json' }
-          });
+          const { data: osData, error } = await supabase
+            .from('ordens_servico')
+            .update(updatePayload)
+            .eq('id', osId)
+            .select()
+            .single();
+
+          if (error) {
+            console.log("[api-os] Erro ao atualizar OS:", error);
+            throw error;
+          }
+
+          console.log("[api-os] OS atualizada com sucesso:", osData);
+
+          return new Response(
+            JSON.stringify({ ok: true, data: osData }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
         }
         break;
 
-      // Excluir OS (soft delete)
       case 'DELETE':
         if (osId) {
-          const { error } = await supabase.from('ordens_servico').update({ deleted_at: new Date().toISOString() }).eq('id', osId);
+          const { error } = await supabase
+            .from('ordens_servico')
+            .update({ deleted_at: new Date().toISOString() })
+            .eq('id', osId);
+
           if (error) throw error;
 
-          return new Response(JSON.stringify({ ok: true, data: { deleted: true } }), {
-            headers: { ...ch, 'Content-Type': 'application/json' }
-          });
+          return new Response(
+            JSON.stringify({ ok: true, data: { deleted: true } }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
         }
         break;
 
       default:
-        return new Response(JSON.stringify({ ok: false, error: { code: "METHOD_NOT_ALLOWED", message: "Método não permitido" } }), {
-          status: 405, headers: { ...ch, 'Content-Type': 'application/json' }
-        });
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: { code: "METHOD_NOT_ALLOWED", message: "Método não permitido" }
+          }),
+          {
+            status: 405,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          }
+        );
     }
-  } catch (err) {
-    const payload = { ok: false, message: (err as Error).message ?? "Erro interno", stack: (err as Error).stack ?? null };
-    return new Response(JSON.stringify(payload), { status: 500, headers: { ...ch, 'Content-Type': 'application/json' } });
+  } catch (error) {
+    console.error('Error in OS API:', error);
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: {
+          code: "INTERNAL_ERROR",
+          message: "Erro interno do servidor"
+        }
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
   }
 });

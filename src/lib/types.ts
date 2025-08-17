@@ -49,16 +49,12 @@ export interface OrdemServico {
 export interface EquipamentoOS {
   id: string;
   ordem_servico_id: string;
-  tipo_id: number;
-  tipo_nome?: string; // para exibição
-  marca_id?: number;
-  marca_nome?: string; // para exibição
+  tipo: string;
+  marca?: string;
   modelo?: string;
   numero_serie?: string;
   created_at: string;
   updated_at: string;
-  tipos_equipamentos?: { nome: string };
-  marcas?: { nome: string };
 }
 
 export interface ServicoOS {
@@ -135,18 +131,16 @@ export interface NovaOSForm {
   // Step 1: Cliente
   cliente_id?: string;
   cliente?: Cliente;
-
+  
   // Step 2: Equipamento
   equipamento: {
     id?: string;
-    tipo_id: number;
-    tipo_nome?: string;
-    marca_id?: number;
-    marca_nome?: string;
+    tipo: string;
+    marca?: string;
     modelo?: string;
     numero_serie?: string;
   };
-
+  
   // Step 3: Serviços
   servicos: Array<{
     id?: string;

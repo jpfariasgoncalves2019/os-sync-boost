@@ -6,9 +6,7 @@ import { z } from "zod";
 import { WizardStep } from "@/components/WizardStep";
 import { ItemList, MoneyInput } from "@/components/ItemList";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Plus } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,7 +15,6 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiClient } from "@/lib/api";
-import { supabase } from "@/integrations/supabase/client";
 import { NovaOSForm, Cliente, EquipamentoOS, ServicoOS, ProdutoOS, DespesaOS, OrdemServico, formatCurrency } from "@/lib/types";
 import { formatPhoneNumber, normalizePhoneNumber, validatePhoneE164 } from "@/lib/format";
 import { Phone, User, Wrench, Package, Receipt, FileText, Save, CheckCircle, X } from "lucide-react";
@@ -35,10 +32,8 @@ const novaOSSchema = z.object({
     email: z.string().email("Email inválido").optional().or(z.literal("")),
   }),
   equipamento: z.object({
-    tipo_id: z.coerce.number().int().positive({ message: "Tipo é obrigatório" }),
-    tipo_nome: z.string().optional(),
-    marca_id: z.coerce.number().int().optional(),
-    marca_nome: z.string().optional(),
+    tipo: z.string().min(1, "Tipo é obrigatório"),
+    marca: z.string().optional(),
     modelo: z.string().optional(),
     numero_serie: z.string().optional(),
   }),
@@ -70,17 +65,8 @@ export default function NovaOSEdicao() {
   const { toast } = useToast();
   
   const [currentStep, setCurrentStep] = useState(1);
-  const [showCancelModal, setShowCancelModal] = useState(false);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(false);
-  const [tipos, setTipos] = useState<any[]>([]);
-  const [marcas, setMarcas] = useState<any[]>([]);
-  const [modalTipoOpen, setModalTipoOpen] = useState(false);
-  const [modalMarcaOpen, setModalMarcaOpen] = useState(false);
-  const [novoTipo, setNovoTipo] = useState("");
-  const [novoMarca, setNovoMarca] = useState("");
-  const [erroNovoTipo, setErroNovoTipo] = useState("");
-  const [erroNovoMarca, setErroNovoMarca] = useState("");
   const [saving, setSaving] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
 
@@ -90,8 +76,8 @@ export default function NovaOSEdicao() {
   const form = useForm<NovaOSForm>({
     resolver: zodResolver(novaOSSchema),
     defaultValues: {
-  cliente: { nome: "", telefone: "", email: "" },
-  equipamento: { tipo_id: 0, tipo_nome: "", marca_id: undefined, marca_nome: "", modelo: "", numero_serie: "" },
+      cliente: { nome: "", telefone: "", email: "" },
+      equipamento: { tipo: "", marca: "", modelo: "", numero_serie: "" },
       servicos: [],
       produtos: [],
       despesas: [],
@@ -119,48 +105,6 @@ export default function NovaOSEdicao() {
     loadClientes();
   }, []);
 
-  // Load tipos e marcas
-  useEffect(() => {
-    const fetchTipos = async (q = "") => {
-      try {
-        const { data: session } = await supabase.auth.getSession();
-        const token = session?.session?.access_token;
-        const res = await fetch(`/api/tipos-equipamentos?q=${encodeURIComponent(q)}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        const json = await res.json();
-        if (!json?.ok) {
-          setTipos([]);
-          return;
-        }
-        setTipos(Array.isArray(json.data?.items) ? json.data.items : []);
-      } catch (err) {
-        setTipos([]);
-        console.error('Erro ao buscar tipos de equipamento:', err);
-      }
-    };
-    const fetchMarcas = async (q = "") => {
-      try {
-        const { data: session } = await supabase.auth.getSession();
-        const token = session?.session?.access_token;
-        const res = await fetch(`/api/marcas?q=${encodeURIComponent(q)}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        const json = await res.json();
-        if (!json?.ok) {
-          setMarcas([]);
-          return;
-        }
-        setMarcas(Array.isArray(json.data?.items) ? json.data.items : []);
-      } catch (err) {
-        setMarcas([]);
-        console.error('Erro ao buscar marcas:', err);
-      }
-    };
-    fetchTipos();
-    fetchMarcas();
-  }, []);
-
   // Load OS data for editing or duplicating
   useEffect(() => {
     const loadOS = async () => {
@@ -175,7 +119,7 @@ export default function NovaOSEdicao() {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });
-  setValue("equipamento", os.equipamento || { tipo_id: 0, marca_id: undefined, modelo: "", numero_serie: "" });
+        setValue("equipamento", os.equipamento || { tipo: "", marca: "", modelo: "", numero_serie: "" });
         setValue("servicos", os.servicos || []);
         setValue("produtos", os.produtos || []);
         setValue("despesas", os.despesas || []);
@@ -220,10 +164,8 @@ export default function NovaOSEdicao() {
           if (os.equipamento_os) {
             const equipamentoData = {
               id: os.equipamento_os.id,
-              tipo_id: os.equipamento_os.tipo_id || 0,
-              tipo_nome: os.equipamento_os.tipos_equipamentos?.nome || os.equipamento_os.tipo_nome || "",
-              marca_id: os.equipamento_os.marca_id || undefined,
-              marca_nome: os.equipamento_os.marcas?.nome || os.equipamento_os.marca_nome || "",
+              tipo: os.equipamento_os.tipo,
+              marca: os.equipamento_os.marca || "",
               modelo: os.equipamento_os.modelo || "",
               numero_serie: os.equipamento_os.numero_serie || "",
             };
@@ -521,11 +463,9 @@ export default function NovaOSEdicao() {
       // Montar payload
       const osData = {
         cliente_id: clienteId,
-        equipamento: formData.equipamento.tipo_id ? {
-          tipo_id: formData.equipamento.tipo_id,
-          tipo_nome: formData.equipamento.tipo_nome,
-          marca_id: formData.equipamento.marca_id,
-          marca_nome: formData.equipamento.marca_nome,
+        equipamento: formData.equipamento.tipo ? {
+          tipo: formData.equipamento.tipo,
+          marca: formData.equipamento.marca || null,
           modelo: formData.equipamento.modelo || null,
           numero_serie: formData.equipamento.numero_serie || null,
         } : null,
@@ -617,27 +557,10 @@ export default function NovaOSEdicao() {
             </Badge>
           )}
         </div>
-        <Button variant="outline" onClick={() => setShowCancelModal(true)} className="flex items-center gap-2">
+        <Button variant="outline" onClick={() => navigate("/")} className="flex items-center gap-2">
           <X className="w-4 h-4" />
           Cancelar
         </Button>
-      {/* Modal de confirmação de cancelamento */}
-      <Dialog open={showCancelModal} onOpenChange={setShowCancelModal}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Cancelar Ordem de Serviço</DialogTitle>
-          </DialogHeader>
-          <div>Você tem certeza que deseja cancelar a criação da Ordem de Serviço? Todas as informações inseridas serão perdidas.</div>
-          <DialogFooter className="flex flex-row gap-2 justify-end">
-            <Button variant="destructive" onClick={() => { setShowCancelModal(false); navigate("/"); }}>
-              Sim, cancelar
-            </Button>
-            <Button variant="outline" onClick={() => setShowCancelModal(false)}>
-              Não, continuar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       </div>
 
       {/* Step 1: Cliente */}
@@ -648,8 +571,8 @@ export default function NovaOSEdicao() {
           currentStep={currentStep}
           totalSteps={6}
           onNext={handleNext}
+          onPrevious={handlePrevious}
           isNextDisabled={!watchedData.cliente.nome || !watchedData.cliente.telefone}
-          showPrevious={false}
         >
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-4">
@@ -799,82 +722,40 @@ export default function NovaOSEdicao() {
           totalSteps={6}
           onNext={handleNext}
           onPrevious={handlePrevious}
-          isNextDisabled={!watchedData.equipamento.tipo_id}
-          showPrevious={true}
+          isNextDisabled={!watchedData.equipamento.tipo}
         >
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-4">
               <Wrench className="w-5 h-5 text-primary" />
               <h3 className="text-lg font-medium">Dados do Equipamento</h3>
             </div>
+
             <div className="grid gap-4 md:grid-cols-2">
               <Controller
-                name="equipamento.tipo_id"
+                name="equipamento.tipo"
                 control={control}
                 render={({ field }) => (
                   <div className="space-y-2">
                     <Label>Tipo *</Label>
-                    <div className="flex gap-2 items-center">
-                      <Select
-                        value={field.value ? String(field.value) : ""}
-                        onValueChange={v => field.onChange(Number(v))}
-                        onOpenChange={() => setErroNovoTipo("")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione o tipo..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {tipos.length === 0 ? (
-                            <div className="p-2 text-muted-foreground">Nenhum item encontrado</div>
-                          ) : (
-                            tipos.map((tipo: any) => (
-                              <SelectItem key={tipo.id} value={String(tipo.id)}>{tipo.nome}</SelectItem>
-                            ))
-                          )}
-                          <div className="flex items-center gap-1 p-2 cursor-pointer hover:bg-muted" onClick={() => setModalTipoOpen(true)}>
-                            <Plus className="w-4 h-4" /> Não encontrou? Adicionar novo...
-                          </div>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {errors.equipamento?.tipo_id && (
-                      <p className="text-sm text-destructive">{errors.equipamento.tipo_id.message}</p>
+                    <Input {...field} placeholder="Ex: Roçadeira, Motosserra, Lavajato" />
+                    {errors.equipamento?.tipo && (
+                      <p className="text-sm text-destructive">{errors.equipamento.tipo.message}</p>
                     )}
                   </div>
                 )}
               />
+
               <Controller
-                name="equipamento.marca_id"
+                name="equipamento.marca"
                 control={control}
                 render={({ field }) => (
                   <div className="space-y-2">
                     <Label>Marca</Label>
-                    <div className="flex gap-2 items-center">
-                      <Select
-                        value={field.value ? String(field.value) : ""}
-                        onValueChange={v => field.onChange(Number(v))}
-                        onOpenChange={() => setErroNovoMarca("")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione a marca..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {marcas.length === 0 ? (
-                            <div className="p-2 text-muted-foreground">Nenhum item encontrado</div>
-                          ) : (
-                            marcas.map((marca: any) => (
-                              <SelectItem key={marca.id} value={String(marca.id)}>{marca.nome}</SelectItem>
-                            ))
-                          )}
-                          <div className="flex items-center gap-1 p-2 cursor-pointer hover:bg-muted" onClick={() => setModalMarcaOpen(true)}>
-                            <Plus className="w-4 h-4" /> Não encontrou? Adicionar novo...
-                          </div>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    <Input {...field} placeholder="Ex: Stihl, Husqvarna, Toyama" />
                   </div>
                 )}
               />
+
               <Controller
                 name="equipamento.modelo"
                 control={control}
@@ -885,6 +766,7 @@ export default function NovaOSEdicao() {
                   </div>
                 )}
               />
+
               <Controller
                 name="equipamento.numero_serie"
                 control={control}
@@ -896,76 +778,6 @@ export default function NovaOSEdicao() {
                 )}
               />
             </div>
-
-            {/* Modal Novo Tipo */}
-            <Dialog open={modalTipoOpen} onOpenChange={setModalTipoOpen}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Adicionar Novo Tipo</DialogTitle>
-                </DialogHeader>
-                <Input value={novoTipo} onChange={e => setNovoTipo(e.target.value)} placeholder="Nome do novo tipo" />
-                {erroNovoTipo && <p className="text-sm text-destructive">{erroNovoTipo}</p>}
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setModalTipoOpen(false)}>Cancelar</Button>
-                  <Button onClick={async () => {
-                    setErroNovoTipo("");
-                    if (!novoTipo.trim()) {
-                      setErroNovoTipo("Nome obrigatório");
-                      return;
-                    }
-                    const res = await fetch("/api/tipos-equipamentos", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ nome: novoTipo })
-                    });
-                    const json = await res.json();
-                    if (json.ok) {
-                      setModalTipoOpen(false);
-                      setNovoTipo("");
-                      setTipos((prev) => [...prev, json.data]);
-                      setValue("equipamento.tipo_id", json.data.id);
-                    } else {
-                      setErroNovoTipo(json.error?.message || "Erro ao adicionar tipo");
-                    }
-                  }}>Salvar</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-
-            {/* Modal Nova Marca */}
-            <Dialog open={modalMarcaOpen} onOpenChange={setModalMarcaOpen}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Adicionar Nova Marca</DialogTitle>
-                </DialogHeader>
-                <Input value={novoMarca} onChange={e => setNovoMarca(e.target.value)} placeholder="Nome da nova marca" />
-                {erroNovoMarca && <p className="text-sm text-destructive">{erroNovoMarca}</p>}
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setModalMarcaOpen(false)}>Cancelar</Button>
-                  <Button onClick={async () => {
-                    setErroNovoMarca("");
-                    if (!novoMarca.trim()) {
-                      setErroNovoMarca("Nome obrigatório");
-                      return;
-                    }
-                    const res = await fetch("/api/marcas", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ nome: novoMarca })
-                    });
-                    const json = await res.json();
-                    if (json.ok) {
-                      setModalMarcaOpen(false);
-                      setNovoMarca("");
-                      setMarcas((prev) => [...prev, json.data]);
-                      setValue("equipamento.marca_id", json.data.id);
-                    } else {
-                      setErroNovoMarca(json.error?.message || "Erro ao adicionar marca");
-                    }
-                  }}>Salvar</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
           </div>
         </WizardStep>
       )}

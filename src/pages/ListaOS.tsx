@@ -11,7 +11,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { toast } from "@/hooks/use-toast";
 
 import { apiClient } from "@/lib/api";
-// ...existing code...
 import { OrdemServico, OSFilters, STATUS_CONFIG, SYNC_STATUS_CONFIG, formatCurrency, formatDate } from "@/lib/types";
 import { shareViaWhatsApp } from "@/lib/whatsapp-share";
 import { StatusDropdown } from "@/components/StatusDropdown";
@@ -28,29 +27,13 @@ export default function ListaOS() {
   const loadOrders = async () => {
     setLoading(true);
     try {
-      const pageNum = Number.isFinite(page) && page > 0 ? page : 1;
-      const sizeNum = 20;
-      const params = new URLSearchParams({
-        page: String(pageNum),
-        size: String(sizeNum),
+      const response = await apiClient.listOS({
+        ...filters,
+        ...(searchQuery && { query: searchQuery }),
+        page,
+        size: 20,
       });
-      if (searchQuery) params.set('query', searchQuery);
-      // Adiciona filtros extras
-      Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.set(key, value);
-      });
-      let response;
-      try {
-        response = await apiClient.get(`/api/os?${params.toString()}`);
-      } catch (error: any) {
-        toast({
-          title: "Erro de conexão",
-          description: error?.message || "Não foi possível carregar as OS. Tente novamente.",
-          variant: "destructive",
-        });
-        setLoading(false);
-        return;
-      }
+
       if (response.ok && response.data) {
         setOrders(response.data.items);
         setTotalPages(response.data.pagination.pages);
@@ -61,10 +44,10 @@ export default function ListaOS() {
           variant: "destructive",
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       toast({
-        title: "Erro inesperado",
-        description: error?.message || "Não foi possível carregar as OS.",
+        title: "Erro de conexão",
+        description: "Não foi possível carregar as OS. Tente novamente.",
         variant: "destructive",
       });
     } finally {
@@ -77,8 +60,7 @@ export default function ListaOS() {
   }, [filters, searchQuery, page]);
 
   const handleSearch = (value: string) => {
-    const term = value.toLowerCase().trimStart();
-    setSearchQuery(term);
+    setSearchQuery(value);
     setPage(1);
   };
 
@@ -296,13 +278,7 @@ export default function ListaOS() {
                     <div className="text-sm text-muted-foreground">
                       <div><strong>Nome:</strong> {order.clientes?.nome || "Cliente não encontrado"}</div>
                       <div><strong>Telefone:</strong> {order.clientes?.telefone || "Não informado"}</div>
-                      <div><strong>Equipamento:</strong> {
-                        order.equipamento_os?.tipos_equipamentos?.nome
-                        || order.equipamento_os?.tipo_nome
-                        || order.equipamento?.tipo_nome
-                        || (Array.isArray(order.equipamento_os) ? order.equipamento_os[0]?.tipos_equipamentos?.nome : undefined)
-                        || "Não informado"
-                      }</div>
+                      <div><strong>Email:</strong> {order.clientes?.email || "Não informado"}</div>
                     </div>
                   </div>
                   <DropdownMenu>
@@ -350,22 +326,30 @@ export default function ListaOS() {
               
               <CardContent className="space-y-3">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Data de Entrada:</span>
+                  <span className="text-muted-foreground">Data:</span>
                   <span>{formatDate(order.data)}</span>
                 </div>
-                <div className="flex justify-between items-end mt-2 gap-2 flex-wrap">
+                
+                <div className="flex justify-between items-center">
+                  <StatusDropdown 
+                    osId={order.id}
+                    currentStatus={order.status}
+                    onStatusChange={(newStatus) => {
+                      setOrders(prev => 
+                        prev.map(o => o.id === order.id ? { ...o, status: newStatus as any } : o)
+                      );
+                    }}
+                  />
                   <span className="font-semibold text-lg">{formatCurrency(order.total_geral)}</span>
-                  <div className="w-32 min-w-[120px]">
-                    <StatusDropdown 
-                      osId={order.id}
-                      currentStatus={order.status}
-                      onStatusChange={(newStatus) => {
-                        setOrders(prev => 
-                          prev.map(o => o.id === order.id ? { ...o, status: newStatus as any } : o)
-                        );
-                      }}
-                    />
-                  </div>
+                </div>
+                
+                <div className="flex justify-between items-center text-xs">
+                  <Badge variant="outline" className={SYNC_STATUS_CONFIG[order.sync_status].color}>
+                    {SYNC_STATUS_CONFIG[order.sync_status].label}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {formatDate(order.updated_at)}
+                  </span>
                 </div>
               </CardContent>
             </Card>
